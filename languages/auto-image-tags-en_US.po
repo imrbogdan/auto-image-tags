@@ -1,0 +1,412 @@
+# English Translation for Auto Image Tags Plugin
+# Copyright (C) 2025 Shapovalov Bogdan
+msgid ""
+msgstr ""
+"Project-Id-Version: Auto Image Tags 1.2.0\n"
+"Language: en_US\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Auto Image Tags"
+msgstr "Auto Image Tags"
+
+msgid "Настройки"
+msgstr "Settings"
+
+msgid "Обработка изображений"
+msgstr "Process Images"
+
+msgid "Предпросмотр"
+msgstr "Preview"
+
+msgid "Статистика"
+msgstr "Statistics"
+
+msgid "О плагине"
+msgstr "About"
+
+msgid "Языковые настройки"
+msgstr "Language Settings"
+
+msgid "Язык плагина"
+msgstr "Plugin Language"
+
+msgid "Автоматически (язык сайта)"
+msgstr "Automatic (site language)"
+
+msgid "Выберите язык интерфейса плагина"
+msgstr "Select plugin interface language"
+
+msgid "Форматы тегов"
+msgstr "Tag Formats"
+
+msgid "Формат ALT тега"
+msgstr "ALT Tag Format"
+
+msgid "Не изменять"
+msgstr "Do Not Change"
+
+msgid "Название файла"
+msgstr "Filename"
+
+msgid "Заголовок записи/страницы"
+msgstr "Post/Page Title"
+
+msgid "Название сайта"
+msgstr "Site Name"
+
+msgid "Название файла + Заголовок записи"
+msgstr "Filename + Post Title"
+
+msgid "Название файла + Название сайта"
+msgstr "Filename + Site Name"
+
+msgid "Произвольный текст"
+msgstr "Custom Text"
+
+msgid "Перезаписывать существующие"
+msgstr "Overwrite Existing"
+
+msgid "Произвольный ALT текст"
+msgstr "Custom ALT Text"
+
+msgid "Используйте {filename}, {posttitle}, {sitename}, {category}, {tags}, {author}, {date}, {year}, {month} как переменные"
+msgstr "Use {filename}, {posttitle}, {sitename}, {category}, {tags}, {author}, {date}, {year}, {month} as variables"
+
+msgid "Формат TITLE тега"
+msgstr "TITLE Tag Format"
+
+msgid "Произвольный TITLE текст"
+msgstr "Custom TITLE Text"
+
+msgid "Формат Caption (подпись)"
+msgstr "Caption Format"
+
+msgid "Формат Description (описание)"
+msgstr "Description Format"
+
+msgid "Обработка имен файлов"
+msgstr "Filename Processing"
+
+msgid "Опции очистки"
+msgstr "Cleanup Options"
+
+msgid "Заменять дефисы и подчеркивания на пробелы"
+msgstr "Replace hyphens and underscores with spaces"
+
+msgid "Удалять точки из имен файлов"
+msgstr "Remove dots from filenames"
+
+msgid "Делать первую букву каждого слова заглавной"
+msgstr "Capitalize the first letter of each word"
+
+msgid "Удалять номера камер (DSC_0001, IMG_20231225)"
+msgstr "Remove camera numbers (DSC_0001, IMG_20231225)"
+
+msgid "Разделять CamelCase (PhotoOfProduct → Photo Of Product)"
+msgstr "Split CamelCase (PhotoOfProduct → Photo Of Product)"
+
+msgid "Удалять суффиксы размеров (-300x200, -scaled, -thumb)"
+msgstr "Remove size suffixes (-300x200, -scaled, -thumb)"
+
+msgid "Стоп-слова"
+msgstr "Stop Words"
+
+msgid "Слова для удаления из имен файлов, разделенные запятыми"
+msgstr "Words to remove from filenames, comma-separated"
+
+msgid "Дополнительные настройки"
+msgstr "Additional Settings"
+
+msgid "Режим работы"
+msgstr "Operation Mode"
+
+msgid "Обрабатывать изображения при загрузке"
+msgstr "Process images on upload"
+
+msgid "Тестовый режим (без сохранения изменений)"
+msgstr "Test Mode (without saving changes)"
+
+msgid "Обработка существующих изображений"
+msgstr "Process Existing Images"
+
+msgid "Тестовый режим активен!"
+msgstr "Test mode is active!"
+
+msgid "Изменения не будут сохранены. Отключите тестовый режим в настройках для реальной обработки."
+msgstr "Changes will not be saved. Disable test mode in settings for actual processing."
+
+msgid "Внимание!"
+msgstr "Warning!"
+
+msgid "Перед массовой обработкой рекомендуется создать резервную копию базы данных."
+msgstr "It is recommended to create a database backup before bulk processing."
+
+msgid "Фильтры обработки"
+msgstr "Processing Filters"
+
+msgid "Период загрузки:"
+msgstr "Upload Period:"
+
+msgid "Все время"
+msgstr "All Time"
+
+msgid "Сегодня"
+msgstr "Today"
+
+msgid "Последняя неделя"
+msgstr "Last Week"
+
+msgid "Последний месяц"
+msgstr "Last Month"
+
+msgid "Последний год"
+msgstr "Last Year"
+
+msgid "Статус:"
+msgstr "Status:"
+
+msgid "Все изображения"
+msgstr "All Images"
+
+msgid "Без ALT"
+msgstr "Without ALT"
+
+msgid "Без TITLE"
+msgstr "Without TITLE"
+
+msgid "Без тегов"
+msgstr "Without Tags"
+
+msgid "Пост/Страница:"
+msgstr "Post/Page:"
+
+msgid "Все"
+msgstr "All"
+
+msgid "Загрузка..."
+msgstr "Loading..."
+
+msgid "Загрузка статистики..."
+msgstr "Loading statistics..."
+
+msgid "Начать обработку"
+msgstr "Start Processing"
+
+msgid "Результаты обработки:"
+msgstr "Processing Results:"
+
+msgid "Всего изображений:"
+msgstr "Total Images:"
+
+msgid "Без ALT тега:"
+msgstr "Without ALT tag:"
+
+msgid "Без TITLE тега:"
+msgstr "Without TITLE tag:"
+
+msgid "Будет обработано:"
+msgstr "Will be processed:"
+
+msgid "Нет изображений для обработки с выбранными фильтрами."
+msgstr "No images to process with selected filters."
+
+msgid "Обработано:"
+msgstr "Processed:"
+
+msgid "Успешно:"
+msgstr "Success:"
+
+msgid "Пропущено:"
+msgstr "Skipped:"
+
+msgid "Ошибок:"
+msgstr "Errors:"
+
+msgid "Обработка завершена!"
+msgstr "Processing Complete!"
+
+msgid "Успешно обработано:"
+msgstr "Successfully processed:"
+
+msgid "ТЕСТОВЫЙ РЕЖИМ"
+msgstr "TEST MODE"
+
+msgid "Это был тестовый прогон. Изменения не были сохранены."
+msgstr "This was a test run. Changes were not saved."
+
+msgid "Обработать заново"
+msgstr "Process Again"
+
+msgid "Вы уверены, что хотите начать обработку изображений?"
+msgstr "Are you sure you want to start processing images?"
+
+msgid "Запустить тестовую обработку? (изменения не будут сохранены)"
+msgstr "Run test processing? (changes will not be saved)"
+
+msgid "Предпросмотр изменений"
+msgstr "Preview Changes"
+
+msgid "Здесь вы можете посмотреть, как будут выглядеть теги после обработки, без внесения реальных изменений."
+msgstr "Here you can see how the tags will look after processing, without making actual changes."
+
+msgid "Фильтры"
+msgstr "Filters"
+
+msgid "Количество изображений:"
+msgstr "Number of images:"
+
+msgid "Показать:"
+msgstr "Show:"
+
+msgid "Загрузить предпросмотр"
+msgstr "Load Preview"
+
+msgid "Результаты предпросмотра"
+msgstr "Preview Results"
+
+msgid "Изображение"
+msgstr "Image"
+
+msgid "Текущие значения"
+msgstr "Current Values"
+
+msgid "Новые значения"
+msgstr "New Values"
+
+msgid "пусто"
+msgstr "empty"
+
+msgid "без изменений"
+msgstr "no changes"
+
+msgid "Статистика обработки"
+msgstr "Processing Statistics"
+
+msgid "Общая статистика"
+msgstr "Overall Statistics"
+
+msgid "Всего обработано:"
+msgstr "Total Processed:"
+
+msgid "Успешно обновлено:"
+msgstr "Successfully Updated:"
+
+msgid "История обработок"
+msgstr "Processing History"
+
+msgid "Дата"
+msgstr "Date"
+
+msgid "Всего"
+msgstr "Total"
+
+msgid "Обработано"
+msgstr "Processed"
+
+msgid "Успешно"
+msgstr "Success"
+
+msgid "Пропущено"
+msgstr "Skipped"
+
+msgid "Ошибок"
+msgstr "Errors"
+
+msgid "Режим"
+msgstr "Mode"
+
+msgid "Тест"
+msgstr "Test"
+
+msgid "Обычный"
+msgstr "Normal"
+
+msgid "История обработок пуста."
+msgstr "Processing history is empty."
+
+msgid "О плагине Auto Image Tags"
+msgstr "About Auto Image Tags Plugin"
+
+msgid "Информация о плагине"
+msgstr "Plugin Information"
+
+msgid "Версия:"
+msgstr "Version:"
+
+msgid "Автор:"
+msgstr "Author:"
+
+msgid "Telegram:"
+msgstr "Telegram:"
+
+msgid "Возможности плагина"
+msgstr "Plugin Features"
+
+msgid "Что нового в версии 1.2.0"
+msgstr "What's New in Version 1.2.0"
+
+msgid "Поддержка и обратная связь"
+msgstr "Support and Feedback"
+
+msgid "Если у вас есть вопросы, предложения или вы нашли ошибку, свяжитесь со мной через Telegram."
+msgstr "If you have questions, suggestions, or found a bug, contact me via Telegram."
+
+msgid "Плагин распространяется бесплатно для помощи сообществу WordPress."
+msgstr "The plugin is distributed free to help the WordPress community."
+
+msgid "Все функции доступны бесплатно, без Pro версии!"
+msgstr "All features are available for free, without a Pro version!"
+
+msgid "Недостаточно прав"
+msgstr "Insufficient permissions"
+
+msgid "Слишком много изображений для подсчета. Используйте фильтры."
+msgstr "Too many images to count. Use filters."
+
+msgid "Автоматическое добавление ALT, TITLE, Caption и Description"
+msgstr "Automatic addition of ALT, TITLE, Caption and Description"
+
+msgid "Предпросмотр изменений перед применением"
+msgstr "Preview changes before applying"
+
+msgid "Индивидуальная настройка перезаписи для каждого атрибута"
+msgstr "Individual overwrite settings for each attribute"
+
+msgid "Фильтры для массовой обработки (по датам, постам, статусу)"
+msgstr "Filters for bulk processing (by dates, posts, status)"
+
+msgid "Продвинутая очистка имен файлов"
+msgstr "Advanced filename cleanup"
+
+msgid "Стоп-слова для удаления лишних слов"
+msgstr "Stop words to remove unnecessary words"
+
+msgid "Тестовый режим для безопасной проверки"
+msgstr "Test mode for safe checking"
+
+msgid "История обработок и статистика"
+msgstr "Processing history and statistics"
+
+msgid "Поддержка нескольких языков"
+msgstr "Multi-language support"
+
+msgid "Расширенные переменные в шаблонах"
+msgstr "Extended variables in templates"
+
+msgid "Предпросмотр изменений с таблицей \"было → станет\""
+msgstr "Preview changes with \"before → after\" table"
+
+msgid "Поддержка Caption и Description"
+msgstr "Caption and Description support"
+
+msgid "Улучшенная очистка имен (CamelCase, удаление номеров камер)"
+msgstr "Improved cleanup (CamelCase, camera number removal)"
+
+msgid "Стоп-слова с возможностью добавления своих"
+msgstr "Stop words with custom additions"
+
+msgid "Выбор языка плагина"
+msgstr "Plugin language selection"
