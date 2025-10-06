@@ -1,12 +1,12 @@
 === Auto Image Tags ===
 Contributors: shapovalovbogdan
 Donate link: https://t.me/shapovalovbogdan
-Tags: images, seo, alt, title, media, automatic, optimization, image tags, media library, multilingual
+Tags: images, alt, seo, media, accessibility
 Requires at least: 5.0
-Tested up to: 6.4
+Tested up to: 6.8
 Stable tag: 1.2.0
 Requires PHP: 7.2
-License: GPLv2 or later
+License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 Автоматическое добавление ALT, TITLE, Caption и Description к изображениям в медиатеке WordPress для улучшения SEO.

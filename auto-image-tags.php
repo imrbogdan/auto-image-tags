@@ -1,6 +1,7 @@
 <?php
 /**
  * Plugin Name: Auto Image Tags
+ * Plugin URI: https://github.com/imrbogdan/auto-image-tags
  * Description: Автоматическое добавление alt и title тегов к изображениям в медиатеке WordPress
  * Version: 1.2.0
  * Author: Shapovalov Bogdan
@@ -127,18 +128,14 @@ public function init() {
     $settings = get_option('ait_settings', array());
     $language = isset($settings['plugin_language']) ? $settings['plugin_language'] : 'auto';
     
-    // Принудительная смена локали для плагина
     if ($language !== 'auto' && !empty($language)) {
         add_filter('determine_locale', function($locale) use ($language) {
-            // Применяем только на страницах плагина
             if (isset($_GET['page']) && strpos($_GET['page'], 'auto-image-tags') !== false) {
                 return $language;
             }
             return $locale;
         }, 10);
     }
-    
-    load_plugin_textdomain('auto-image-tags', false, dirname(plugin_basename(__FILE__)) . '/languages');
 }
     
     /**
@@ -621,7 +618,7 @@ public function init() {
                         action: 'ait_preview_changes',
                         limit: limit,
                         filter: filter,
-                        nonce: '<?php echo wp_create_nonce('ait_ajax_nonce'); ?>'
+                        nonce: '<?php echo esc_attr(wp_create_nonce('ait_ajax_nonce')); ?>'
                     },
                     success: function(response) {
                         if (response.success) {
@@ -768,7 +765,7 @@ public function init() {
                 type: 'POST',
                 data: {
                     action: 'ait_get_filter_options',
-                    nonce: '<?php echo wp_create_nonce('ait_ajax_nonce'); ?>'
+                    nonce: '<?php echo esc_attr(wp_create_nonce('ait_ajax_nonce')); ?>'
                 },
                 success: function(response) {
                     if (response.success) {
@@ -795,7 +792,7 @@ public function init() {
                     data: {
                         action: 'ait_get_images_count',
                         filters: filters,
-                        nonce: '<?php echo wp_create_nonce('ait_ajax_nonce'); ?>'
+                        nonce: '<?php echo esc_attr(wp_create_nonce('ait_ajax_nonce')); ?>'
                     },
                     success: function(response) {
                         if (response.success) {
@@ -855,7 +852,7 @@ public function init() {
                         action: 'ait_process_existing_images',
                         offset: offset,
                         filters: filters,
-                        nonce: '<?php echo wp_create_nonce('ait_ajax_nonce'); ?>'
+                        nonce: '<?php echo esc_attr(wp_create_nonce('ait_ajax_nonce')); ?>'
                     },
                     success: function(response) {
                         if (response.success) {
@@ -976,13 +973,13 @@ public function init() {
                 <tbody>
                     <?php foreach ($logs as $log): ?>
                     <tr>
-                        <td><?php echo wp_date(get_option('date_format') . ' ' . get_option('time_format'), strtotime($log->process_date)); ?></td>
-                        <td><?php echo $log->total_images; ?></td>
+                        <td><?php echo esc_html(wp_date(...)); ?></td>
+						<td><?php echo absint($log->total_images); ?></td>
                         <td><?php echo $log->processed; ?></td>
                         <td><?php echo $log->success; ?></td>
                         <td><?php echo $log->skipped; ?></td>
                         <td><?php echo $log->errors; ?></td>
-                        <td><?php echo $log->test_mode ? __('Тест', 'auto-image-tags') : __('Обычный', 'auto-image-tags'); ?></td>
+                        <td><?php echo esc_html($log->test_mode ? __('Тест', 'auto-image-tags') : __('Обычный', 'auto-image-tags')); ?></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
