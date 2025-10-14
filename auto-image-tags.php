@@ -2,13 +2,16 @@
 /**
  * Plugin Name: Auto Image Tags
  * Plugin URI: https://github.com/imrbogdan/auto-image-tags
- * Description: Автоматическое добавление alt и title тегов к изображениям в медиатеке WordPress
- * Version: 1.2.0
+ * Description: Automatically add ALT, TITLE, Caption and Description tags to WordPress media library images. Includes WooCommerce integration and translation support.
+ * Version: 2.0.0
  * Author: Shapovalov Bogdan
  * Author URI: https://t.me/shapovalovbogdan
- * License: GPL v3 or later
+ * License: GPLv3 or later
+ * License URI: https://www.gnu.org/licenses/gpl-3.0.html
  * Text Domain: auto-image-tags
  * Domain Path: /languages
+ * Requires at least: 5.0
+ * Requires PHP: 7.2
  */
 
 // Защита от прямого доступа
@@ -16,15 +19,48 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Временная отладка
+if (!function_exists('autoimta_debug_log')) {
+    function autoimta_debug_log($message) {
+        if (WP_DEBUG === true) {
+            if (is_array($message) || is_object($message)) {
+                error_log(print_r($message, true));
+            } else {
+                error_log($message);
+            }
+        }
+    }
+}
+
 // Определение констант плагина
-define('AIT_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('AIT_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('AIT_PLUGIN_VERSION', '1.2.0');
+define('AUTOIMTA_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('AUTOIMTA_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('AUTOIMTA_VERSION', '2.0.0');
+
+// Проверка требований
+function autoimta_check_requirements() {
+    $errors = array();
+    
+    if (version_compare(PHP_VERSION, '7.2', '<')) {
+        $errors[] = 'PHP 7.2 or higher is required. Current version: ' . PHP_VERSION;
+    }
+    
+    global $wp_version;
+    if (version_compare($wp_version, '5.0', '<')) {
+        $errors[] = 'WordPress 5.0 or higher is required. Current version: ' . $wp_version;
+    }
+    
+    if (!empty($errors)) {
+        deactivate_plugins(plugin_basename(__FILE__));
+        wp_die('<h1>Auto Image Tags</h1><p><strong>Activation Error:</strong></p><ul><li>' . implode('</li><li>', $errors) . '</li></ul><p><a href="' . esc_url(admin_url('plugins.php')) . '">Return to Plugins</a></p>');
+    }
+}
+register_activation_hook(__FILE__, 'autoimta_check_requirements');
 
 /**
  * Основной класс плагина
  */
-class AutoImageTags {
+class AUTOIMTA_Plugin {
     
     private static $instance = null;
     
@@ -45,48 +81,96 @@ class AutoImageTags {
         add_filter('add_attachment', array($this, 'handle_image_upload'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
         
-        add_action('wp_ajax_ait_process_existing_images', array($this, 'ajax_process_existing_images'));
-        add_action('wp_ajax_ait_get_images_count', array($this, 'ajax_get_images_count'));
-        add_action('wp_ajax_ait_preview_changes', array($this, 'ajax_preview_changes'));
-        add_action('wp_ajax_ait_get_filter_options', array($this, 'ajax_get_filter_options'));
+        add_action('wp_ajax_autoimta_process_existing_images', array($this, 'ajax_process_existing_images'));
+        add_action('wp_ajax_autoimta_get_images_count', array($this, 'ajax_get_images_count'));
+        add_action('wp_ajax_autoimta_preview_changes', array($this, 'ajax_preview_changes'));
+        add_action('wp_ajax_autoimta_get_filter_options', array($this, 'ajax_get_filter_options'));
+        add_action('wp_ajax_autoimta_get_remove_stats', array($this, 'ajax_get_remove_stats'));
+        add_action('wp_ajax_autoimta_remove_tags', array($this, 'ajax_remove_tags'));
+        add_action('wp_ajax_autoimta_export_settings', array($this, 'ajax_export_settings'));
+        add_action('wp_ajax_autoimta_import_settings', array($this, 'ajax_import_settings'));
+        add_action('wp_ajax_autoimta_test_translation', array($this, 'ajax_test_translation'));
+        add_action('wp_ajax_autoimta_get_translation_stats', array($this, 'ajax_get_translation_stats'));
+        add_action('wp_ajax_autoimta_translate_batch', array($this, 'ajax_translate_batch'));
+        
+        // WooCommerce интеграция
+        add_action('woocommerce_new_product', array($this, 'handle_woocommerce_product'), 10, 1);
+        add_action('woocommerce_update_product', array($this, 'handle_woocommerce_product'), 10, 1);
     }
-	
-    /**
+
+/**
      * Активация плагина
      */
     public function activate() {
-        // Установка дефолтных настроек
-        if (!get_option('ait_settings')) {
-            $default_settings = array(
-                'alt_format' => 'filename',
-                'title_format' => 'filename',
-                'caption_format' => 'disabled',
-                'description_format' => 'disabled',
-                'alt_custom_text' => '',
-                'title_custom_text' => '',
-                'caption_custom_text' => '',
-                'description_custom_text' => '',
-                'remove_hyphens' => '1',
-                'remove_dots' => '1',
-                'capitalize_words' => '1',
-                'remove_numbers' => '1',
-                'camelcase_split' => '1',
-                'remove_size_suffix' => '1',
-                'process_on_upload' => '1',
-                'overwrite_alt' => '0',
-                'overwrite_title' => '0',
-                'overwrite_caption' => '0',
-                'overwrite_description' => '0',
-                'stop_words' => 'DSC, IMG, image, photo, picture, pic, screenshot, foto',
-                'custom_stop_words' => '',
-                'test_mode' => '0',
-                'plugin_language' => 'auto'
-            );
-            update_option('ait_settings', $default_settings);
-        }
+        autoimta_debug_log('=== AUTOIMTA Plugin Activation Started ===');
         
-        // Создание таблицы для логов
-        $this->create_log_table();
+        try {
+            // Установка дефолтных настроек
+            if (!get_option('autoimta_settings')) {
+                autoimta_debug_log('Creating default settings...');
+                $default_settings = array(
+                    'alt_format' => 'filename',
+                    'title_format' => 'filename',
+                    'caption_format' => 'disabled',
+                    'description_format' => 'disabled',
+                    'alt_custom_text' => '',
+                    'title_custom_text' => '',
+                    'caption_custom_text' => '',
+                    'description_custom_text' => '',
+                    'remove_hyphens' => '1',
+                    'remove_dots' => '1',
+                    'capitalize_words' => '1',
+                    'remove_numbers' => '1',
+                    'camelcase_split' => '1',
+                    'remove_size_suffix' => '1',
+                    'process_on_upload' => '1',
+                    'overwrite_alt' => '0',
+                    'overwrite_title' => '0',
+                    'overwrite_caption' => '0',
+                    'overwrite_description' => '0',
+                    'stop_words' => 'DSC, IMG, image, photo, picture, pic, screenshot, foto',
+                    'custom_stop_words' => '',
+                    'test_mode' => '0',
+                    'plugin_language' => 'auto',
+                    'translation_service' => 'google',
+                    'translation_google_key' => '',
+                    'translation_deepl_key' => '',
+                    'translation_yandex_key' => '',
+                    'translation_libre_url' => 'https://libretranslate.com',
+                    'translation_mymemory_email' => '',
+                    'translation_source_lang' => 'en',
+                    'translation_target_lang' => 'ru',
+                    'translation_auto_translate' => '0',
+                    'translate_alt' => '1',
+                    'translate_title' => '1',
+                    'translate_caption' => '0',
+                    'translate_description' => '0',
+                    'woocommerce_enabled' => '1',
+                    'woocommerce_process_gallery' => '1',
+                    'woocommerce_use_product_title' => '1',
+                    'woocommerce_use_category' => '1',
+                    'woocommerce_use_sku' => '0'
+                );
+                $result = update_option('autoimta_settings', $default_settings);
+                if ($result) {
+                    autoimta_debug_log('Default settings created successfully');
+                } else {
+                    autoimta_debug_log('WARNING: Failed to create default settings');
+                }
+            } else {
+                autoimta_debug_log('Settings already exist, skipping...');
+            }
+            
+            // Создание таблицы для логов
+            autoimta_debug_log('Creating log table...');
+            $this->create_log_table();
+            autoimta_debug_log('Log table creation completed');
+            
+            autoimta_debug_log('=== AUTOIMTA Plugin Activation Completed Successfully ===');
+        } catch (Exception $e) {
+            autoimta_debug_log('FATAL ERROR during activation: ' . $e->getMessage());
+            autoimta_debug_log('Stack trace: ' . $e->getTraceAsString());
+        }
     }
     
     /**
@@ -95,23 +179,47 @@ class AutoImageTags {
     private function create_log_table() {
         global $wpdb;
         
-        $table_name = $wpdb->prefix . 'ait_process_log';
-        $charset_collate = $wpdb->get_charset_collate();
-        
-        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-            id int(11) NOT NULL AUTO_INCREMENT,
-            process_date datetime DEFAULT CURRENT_TIMESTAMP,
-            total_images int(11) DEFAULT 0,
-            processed int(11) DEFAULT 0,
-            success int(11) DEFAULT 0,
-            skipped int(11) DEFAULT 0,
-            errors int(11) DEFAULT 0,
-            test_mode tinyint(1) DEFAULT 0,
-            PRIMARY KEY (id)
-        ) $charset_collate;";
-        
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        dbDelta($sql);
+        try {
+            $table_name = $wpdb->prefix . 'autoimta_process_log';
+            $charset_collate = $wpdb->get_charset_collate();
+            
+            autoimta_debug_log('Table name: ' . $table_name);
+            autoimta_debug_log('Charset collate: ' . $charset_collate);
+            
+            $sql = "CREATE TABLE IF NOT EXISTS $table_name (
+                id int(11) NOT NULL AUTO_INCREMENT,
+                process_date datetime DEFAULT CURRENT_TIMESTAMP,
+                total_images int(11) DEFAULT 0,
+                processed int(11) DEFAULT 0,
+                success int(11) DEFAULT 0,
+                skipped int(11) DEFAULT 0,
+                errors int(11) DEFAULT 0,
+                test_mode tinyint(1) DEFAULT 0,
+                PRIMARY KEY (id)
+            ) $charset_collate;";
+            
+            autoimta_debug_log('SQL query prepared');
+            
+            require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+            autoimta_debug_log('dbDelta function loaded');
+            
+            $result = dbDelta($sql);
+            autoimta_debug_log('dbDelta result: ' . print_r($result, true));
+            
+            // Проверка создания таблицы
+            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name));
+            if ($table_exists) {
+                autoimta_debug_log('Table created successfully: ' . $table_name);
+            } else {
+                autoimta_debug_log('WARNING: Table may not have been created: ' . $table_name);
+            }
+            
+            if ($wpdb->last_error) {
+                autoimta_debug_log('Database error: ' . $wpdb->last_error);
+            }
+        } catch (Exception $e) {
+            autoimta_debug_log('ERROR in create_log_table: ' . $e->getMessage());
+        }
     }
     
     /**
@@ -124,19 +232,19 @@ class AutoImageTags {
     /**
      * Инициализация
      */
-public function init() {
-    $settings = get_option('ait_settings', array());
-    $language = isset($settings['plugin_language']) ? $settings['plugin_language'] : 'auto';
-    
-    if ($language !== 'auto' && !empty($language)) {
-        add_filter('determine_locale', function($locale) use ($language) {
-            if (isset($_GET['page']) && strpos($_GET['page'], 'auto-image-tags') !== false) {
-                return $language;
-            }
-            return $locale;
-        }, 10);
+    public function init() {
+        $settings = get_option('autoimta_settings', array());
+        $language = isset($settings['plugin_language']) ? $settings['plugin_language'] : 'auto';
+        
+        if ($language !== 'auto' && !empty($language)) {
+            add_filter('determine_locale', function($locale) use ($language) {
+                if (isset($_GET['page']) && strpos($_GET['page'], 'auto-image-tags') !== false) {
+                    return $language;
+                }
+                return $locale;
+            }, 10);
+        }
     }
-}
     
     /**
      * Добавление меню в админку
@@ -157,7 +265,7 @@ public function init() {
      * Регистрация настроек
      */
     public function register_settings() {
-        register_setting('ait_settings_group', 'ait_settings', array($this, 'sanitize_settings'));
+        register_setting('autoimta_settings_group', 'autoimta_settings', array($this, 'sanitize_settings'));
     }
     
     /**
@@ -199,40 +307,120 @@ public function init() {
         $sanitized['test_mode'] = isset($input['test_mode']) ? '1' : '0';
         $sanitized['plugin_language'] = sanitize_text_field($input['plugin_language']);
         
+        // Настройки перевода
+        $sanitized['translation_service'] = sanitize_text_field($input['translation_service']);
+        $sanitized['translation_google_key'] = sanitize_text_field($input['translation_google_key']);
+        $sanitized['translation_deepl_key'] = sanitize_text_field($input['translation_deepl_key']);
+        $sanitized['translation_yandex_key'] = sanitize_text_field($input['translation_yandex_key']);
+        $sanitized['translation_libre_url'] = esc_url_raw($input['translation_libre_url']);
+        $sanitized['translation_mymemory_email'] = sanitize_email($input['translation_mymemory_email']);
+        $sanitized['translation_source_lang'] = sanitize_text_field($input['translation_source_lang']);
+        $sanitized['translation_target_lang'] = sanitize_text_field($input['translation_target_lang']);
+        $sanitized['translation_auto_translate'] = isset($input['translation_auto_translate']) ? '1' : '0';
+        $sanitized['translate_alt'] = isset($input['translate_alt']) ? '1' : '0';
+        $sanitized['translate_title'] = isset($input['translate_title']) ? '1' : '0';
+        $sanitized['translate_caption'] = isset($input['translate_caption']) ? '1' : '0';
+        $sanitized['translate_description'] = isset($input['translate_description']) ? '1' : '0';
+        
+        // WooCommerce настройки
+        $sanitized['woocommerce_enabled'] = isset($input['woocommerce_enabled']) ? '1' : '0';
+        $sanitized['woocommerce_process_gallery'] = isset($input['woocommerce_process_gallery']) ? '1' : '0';
+        $sanitized['woocommerce_use_product_title'] = isset($input['woocommerce_use_product_title']) ? '1' : '0';
+        $sanitized['woocommerce_use_category'] = isset($input['woocommerce_use_category']) ? '1' : '0';
+        $sanitized['woocommerce_use_sku'] = isset($input['woocommerce_use_sku']) ? '1' : '0';
+        
         return $sanitized;
     }
     
     /**
      * Главная страница админки с табами
      */
-    public function admin_page() {
-        $settings = get_option('ait_settings');
-        $active_tab = isset($_GET['tab']) ? $_GET['tab'] : 'settings';
+public function admin_page() {
+    $settings = get_option('autoimta_settings');
+    
+    // Проверка что настройки существуют
+    if (!is_array($settings) || empty($settings)) {
+        $settings = array(
+            'alt_format' => 'filename',
+            'title_format' => 'filename',
+            'caption_format' => 'disabled',
+            'description_format' => 'disabled',
+            'alt_custom_text' => '',
+            'title_custom_text' => '',
+            'caption_custom_text' => '',
+            'description_custom_text' => '',
+            'remove_hyphens' => '1',
+            'remove_dots' => '1',
+            'capitalize_words' => '1',
+            'remove_numbers' => '1',
+            'camelcase_split' => '1',
+            'remove_size_suffix' => '1',
+            'process_on_upload' => '1',
+            'overwrite_alt' => '0',
+            'overwrite_title' => '0',
+            'overwrite_caption' => '0',
+            'overwrite_description' => '0',
+            'stop_words' => 'DSC, IMG, image, photo, picture, pic, screenshot, foto',
+            'custom_stop_words' => '',
+            'test_mode' => '0',
+            'plugin_language' => 'auto',
+            'translation_service' => 'google',
+            'translation_google_key' => '',
+            'translation_deepl_key' => '',
+            'translation_yandex_key' => '',
+            'translation_libre_url' => 'https://libretranslate.com',
+            'translation_mymemory_email' => '',
+            'translation_source_lang' => 'en',
+            'translation_target_lang' => 'ru',
+            'translation_auto_translate' => '0',
+            'translate_alt' => '1',
+            'translate_title' => '1',
+            'translate_caption' => '0',
+            'translate_description' => '0',
+            'woocommerce_enabled' => '1',
+            'woocommerce_process_gallery' => '1',
+            'woocommerce_use_product_title' => '1',
+            'woocommerce_use_category' => '1',
+            'woocommerce_use_sku' => '0'
+        );
+        // Сохраняем дефолтные настройки
+        update_option('autoimta_settings', $settings);
+    }
+    
+    $active_tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'settings';
         ?>
         <div class="wrap">
             <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
             
             <!-- Табы навигации -->
             <nav class="nav-tab-wrapper">
-                <a href="?page=auto-image-tags&tab=settings" 
+                <a href="<?php echo esc_url(admin_url('admin.php?page=auto-image-tags&tab=settings')); ?>" 
                    class="nav-tab <?php echo $active_tab == 'settings' ? 'nav-tab-active' : ''; ?>">
-                    <?php _e('Настройки', 'auto-image-tags'); ?>
+                    <?php esc_html_e('Settings', 'auto-image-tags'); ?>
                 </a>
-                <a href="?page=auto-image-tags&tab=process" 
+                <a href="<?php echo esc_url(admin_url('admin.php?page=auto-image-tags&tab=process')); ?>" 
                    class="nav-tab <?php echo $active_tab == 'process' ? 'nav-tab-active' : ''; ?>">
-                    <?php _e('Обработка изображений', 'auto-image-tags'); ?>
+                    <?php esc_html_e('Process Images', 'auto-image-tags'); ?>
                 </a>
-                <a href="?page=auto-image-tags&tab=preview" 
+                <a href="<?php echo esc_url(admin_url('admin.php?page=auto-image-tags&tab=preview')); ?>" 
                    class="nav-tab <?php echo $active_tab == 'preview' ? 'nav-tab-active' : ''; ?>">
-                    <?php _e('Предпросмотр', 'auto-image-tags'); ?>
+                    <?php esc_html_e('Preview', 'auto-image-tags'); ?>
                 </a>
-                <a href="?page=auto-image-tags&tab=stats" 
+                <a href="<?php echo esc_url(admin_url('admin.php?page=auto-image-tags&tab=stats')); ?>" 
                    class="nav-tab <?php echo $active_tab == 'stats' ? 'nav-tab-active' : ''; ?>">
-                    <?php _e('Статистика', 'auto-image-tags'); ?>
+                    <?php esc_html_e('Statistics', 'auto-image-tags'); ?>
                 </a>
-                <a href="?page=auto-image-tags&tab=about" 
+                <a href="<?php echo esc_url(admin_url('admin.php?page=auto-image-tags&tab=tools')); ?>" 
+                   class="nav-tab <?php echo $active_tab == 'tools' ? 'nav-tab-active' : ''; ?>">
+                    <?php esc_html_e('Tools', 'auto-image-tags'); ?>
+                </a>
+                <a href="<?php echo esc_url(admin_url('admin.php?page=auto-image-tags&tab=translation')); ?>" 
+                   class="nav-tab <?php echo $active_tab == 'translation' ? 'nav-tab-active' : ''; ?>">
+                    <?php esc_html_e('Translation', 'auto-image-tags'); ?>
+                </a>
+                <a href="<?php echo esc_url(admin_url('admin.php?page=auto-image-tags&tab=about')); ?>" 
                    class="nav-tab <?php echo $active_tab == 'about' ? 'nav-tab-active' : ''; ?>">
-                    <?php _e('О плагине', 'auto-image-tags'); ?>
+                    <?php esc_html_e('About', 'auto-image-tags'); ?>
                 </a>
             </nav>
             
@@ -251,6 +439,12 @@ public function init() {
                     case 'about':
                         $this->render_about_tab();
                         break;
+                    case 'tools':
+                        $this->render_tools_tab();
+                        break;
+                    case 'translation':
+                        $this->render_translation_tab();
+                        break;
                     case 'settings':
                     default:
                         $this->render_settings_tab($settings);
@@ -261,26 +455,72 @@ public function init() {
         </div>
         <?php
     }
-    
-    /**
+	
+/**
      * Вкладка настроек
      */
-    private function render_settings_tab($settings) {
-        ?>
-        <form method="post" action="options.php" class="ait-settings-form">
-            <?php settings_fields('ait_settings_group'); ?>
+private function render_settings_tab($settings) {
+    // КРИТИЧЕСКИ ВАЖНО: Проверка настроек
+    if (!is_array($settings) || empty($settings)) {
+        $settings = array(
+            'alt_format' => 'filename',
+            'title_format' => 'filename',
+            'caption_format' => 'disabled',
+            'description_format' => 'disabled',
+            'alt_custom_text' => '',
+            'title_custom_text' => '',
+            'caption_custom_text' => '',
+            'description_custom_text' => '',
+            'remove_hyphens' => '1',
+            'remove_dots' => '1',
+            'capitalize_words' => '1',
+            'remove_numbers' => '1',
+            'camelcase_split' => '1',
+            'remove_size_suffix' => '1',
+            'process_on_upload' => '1',
+            'overwrite_alt' => '0',
+            'overwrite_title' => '0',
+            'overwrite_caption' => '0',
+            'overwrite_description' => '0',
+            'stop_words' => 'DSC, IMG, image, photo, picture, pic, screenshot, foto',
+            'custom_stop_words' => '',
+            'test_mode' => '0',
+            'plugin_language' => 'auto',
+            'translation_service' => 'google',
+            'translation_google_key' => '',
+            'translation_deepl_key' => '',
+            'translation_yandex_key' => '',
+            'translation_libre_url' => 'https://libretranslate.com',
+            'translation_mymemory_email' => '',
+            'translation_source_lang' => 'en',
+            'translation_target_lang' => 'ru',
+            'translation_auto_translate' => '0',
+            'translate_alt' => '1',
+            'translate_title' => '1',
+            'translate_caption' => '0',
+            'translate_description' => '0',
+            'woocommerce_enabled' => '1',
+            'woocommerce_process_gallery' => '1',
+            'woocommerce_use_product_title' => '1',
+            'woocommerce_use_category' => '1',
+            'woocommerce_use_sku' => '0'
+        );
+    }
+    ?>
+    <form method="post" action="options.php" class="autoimta-settings-form">
+            <?php settings_fields('autoimta_settings_group'); ?>
             
             <!-- Языковые настройки -->
-            <h2><?php _e('Языковые настройки', 'auto-image-tags'); ?></h2>
+            <h2><?php esc_html_e('Language Settings', 'auto-image-tags'); ?></h2>
             <table class="form-table">
                 <tr>
                     <th scope="row">
-                        <label for="plugin_language"><?php _e('Язык плагина', 'auto-image-tags'); ?></label>
+                        <label for="plugin_language"><?php esc_html_e('Plugin Language', 'auto-image-tags'); ?></label>
                     </th>
                     <td>
-                        <select name="ait_settings[plugin_language]" id="plugin_language">
+                        <select name="autoimta_settings[plugin_language]" id="plugin_language">
                             <option value="auto" <?php selected($settings['plugin_language'], 'auto'); ?>>
-                                <?php _e('Автоматически (язык сайта)', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Automatic (site language)', 'auto-image-tags'); ?>
                             </option>
                             <option value="ru_RU" <?php selected($settings['plugin_language'], 'ru_RU'); ?>>
                                 Русский
@@ -290,61 +530,61 @@ public function init() {
                             </option>
                         </select>
                         <p class="description">
-                            <?php _e('Выберите язык интерфейса плагина', 'auto-image-tags'); ?>
+                            <?php esc_html_e('Select plugin interface language', 'auto-image-tags'); ?>
                         </p>
                     </td>
                 </tr>
             </table>
             
             <!-- Настройки форматов -->
-            <h2><?php _e('Форматы тегов', 'auto-image-tags'); ?></h2>
+            <h2><?php esc_html_e('Tag Formats', 'auto-image-tags'); ?></h2>
             <table class="form-table">
                 <!-- ALT -->
                 <tr>
                     <th scope="row">
-                        <label for="alt_format"><?php _e('Формат ALT тега', 'auto-image-tags'); ?></label>
+                        <label for="alt_format"><?php esc_html_e('ALT Tag Format', 'auto-image-tags'); ?></label>
                     </th>
                     <td>
-                        <select name="ait_settings[alt_format]" id="alt_format" class="regular-text">
+                        <select name="autoimta_settings[alt_format]" id="alt_format" class="regular-text">
                             <option value="disabled" <?php selected($settings['alt_format'], 'disabled'); ?>>
-                                <?php _e('Не изменять', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Do not change', 'auto-image-tags'); ?>
                             </option>
                             <option value="filename" <?php selected($settings['alt_format'], 'filename'); ?>>
-                                <?php _e('Название файла', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Filename', 'auto-image-tags'); ?>
                             </option>
                             <option value="posttitle" <?php selected($settings['alt_format'], 'posttitle'); ?>>
-                                <?php _e('Заголовок записи/страницы', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Post/Page Title', 'auto-image-tags'); ?>
                             </option>
                             <option value="sitename" <?php selected($settings['alt_format'], 'sitename'); ?>>
-                                <?php _e('Название сайта', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Site Name', 'auto-image-tags'); ?>
                             </option>
                             <option value="filename_posttitle" <?php selected($settings['alt_format'], 'filename_posttitle'); ?>>
-                                <?php _e('Название файла + Заголовок записи', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Filename + Post Title', 'auto-image-tags'); ?>
                             </option>
                             <option value="filename_sitename" <?php selected($settings['alt_format'], 'filename_sitename'); ?>>
-                                <?php _e('Название файла + Название сайта', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Filename + Site Name', 'auto-image-tags'); ?>
                             </option>
                             <option value="custom" <?php selected($settings['alt_format'], 'custom'); ?>>
-                                <?php _e('Произвольный текст', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Custom Text', 'auto-image-tags'); ?>
                             </option>
                         </select>
-                        <label class="ait-checkbox-inline">
-                            <input type="checkbox" name="ait_settings[overwrite_alt]" value="1" 
+                        <label class="autoimta-checkbox-inline">
+                            <input type="checkbox" name="autoimta_settings[overwrite_alt]" value="1" 
                                    <?php checked($settings['overwrite_alt'], '1'); ?>>
-                            <?php _e('Перезаписывать существующие', 'auto-image-tags'); ?>
+                            <?php esc_html_e('Overwrite existing', 'auto-image-tags'); ?>
                         </label>
                     </td>
                 </tr>
                 
                 <tr id="alt_custom_row" style="<?php echo ($settings['alt_format'] != 'custom') ? 'display:none;' : ''; ?>">
                     <th scope="row">
-                        <label for="alt_custom_text"><?php _e('Произвольный ALT текст', 'auto-image-tags'); ?></label>
+                        <label for="alt_custom_text"><?php esc_html_e('Custom ALT Text', 'auto-image-tags'); ?></label>
                     </th>
                     <td>
-                        <input type="text" name="ait_settings[alt_custom_text]" id="alt_custom_text" 
+                        <input type="text" name="autoimta_settings[alt_custom_text]" id="alt_custom_text" 
                                value="<?php echo esc_attr($settings['alt_custom_text']); ?>" class="regular-text">
                         <p class="description">
-                            <?php _e('Используйте {filename}, {posttitle}, {sitename}, {category}, {tags}, {author}, {date}, {year}, {month} как переменные', 'auto-image-tags'); ?>
+                            <?php esc_html_e('Use variables: {filename}, {posttitle}, {sitename}, {category}, {tags}, {author}, {date}, {year}, {month}', 'auto-image-tags'); ?>
                         </p>
                     </td>
                 </tr>
@@ -352,46 +592,46 @@ public function init() {
                 <!-- TITLE -->
                 <tr>
                     <th scope="row">
-                        <label for="title_format"><?php _e('Формат TITLE тега', 'auto-image-tags'); ?></label>
+                        <label for="title_format"><?php esc_html_e('TITLE Tag Format', 'auto-image-tags'); ?></label>
                     </th>
                     <td>
-                        <select name="ait_settings[title_format]" id="title_format" class="regular-text">
+                        <select name="autoimta_settings[title_format]" id="title_format" class="regular-text">
                             <option value="disabled" <?php selected($settings['title_format'], 'disabled'); ?>>
-                                <?php _e('Не изменять', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Do not change', 'auto-image-tags'); ?>
                             </option>
                             <option value="filename" <?php selected($settings['title_format'], 'filename'); ?>>
-                                <?php _e('Название файла', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Filename', 'auto-image-tags'); ?>
                             </option>
                             <option value="posttitle" <?php selected($settings['title_format'], 'posttitle'); ?>>
-                                <?php _e('Заголовок записи/страницы', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Post/Page Title', 'auto-image-tags'); ?>
                             </option>
                             <option value="sitename" <?php selected($settings['title_format'], 'sitename'); ?>>
-                                <?php _e('Название сайта', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Site Name', 'auto-image-tags'); ?>
                             </option>
                             <option value="filename_posttitle" <?php selected($settings['title_format'], 'filename_posttitle'); ?>>
-                                <?php _e('Название файла + Заголовок записи', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Filename + Post Title', 'auto-image-tags'); ?>
                             </option>
                             <option value="filename_sitename" <?php selected($settings['title_format'], 'filename_sitename'); ?>>
-                                <?php _e('Название файла + Название сайта', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Filename + Site Name', 'auto-image-tags'); ?>
                             </option>
                             <option value="custom" <?php selected($settings['title_format'], 'custom'); ?>>
-                                <?php _e('Произвольный текст', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Custom Text', 'auto-image-tags'); ?>
                             </option>
                         </select>
-                        <label class="ait-checkbox-inline">
-                            <input type="checkbox" name="ait_settings[overwrite_title]" value="1" 
+                        <label class="autoimta-checkbox-inline">
+                            <input type="checkbox" name="autoimta_settings[overwrite_title]" value="1" 
                                    <?php checked($settings['overwrite_title'], '1'); ?>>
-                            <?php _e('Перезаписывать существующие', 'auto-image-tags'); ?>
+                            <?php esc_html_e('Overwrite existing', 'auto-image-tags'); ?>
                         </label>
                     </td>
                 </tr>
                 
                 <tr id="title_custom_row" style="<?php echo ($settings['title_format'] != 'custom') ? 'display:none;' : ''; ?>">
                     <th scope="row">
-                        <label for="title_custom_text"><?php _e('Произвольный TITLE текст', 'auto-image-tags'); ?></label>
+                        <label for="title_custom_text"><?php esc_html_e('Custom TITLE Text', 'auto-image-tags'); ?></label>
                     </th>
                     <td>
-                        <input type="text" name="ait_settings[title_custom_text]" id="title_custom_text" 
+                        <input type="text" name="autoimta_settings[title_custom_text]" id="title_custom_text" 
                                value="<?php echo esc_attr($settings['title_custom_text']); ?>" class="regular-text">
                     </td>
                 </tr>
@@ -399,27 +639,27 @@ public function init() {
                 <!-- CAPTION -->
                 <tr>
                     <th scope="row">
-                        <label for="caption_format"><?php _e('Формат Caption (подпись)', 'auto-image-tags'); ?></label>
+                        <label for="caption_format"><?php esc_html_e('Caption Format', 'auto-image-tags'); ?></label>
                     </th>
                     <td>
-                        <select name="ait_settings[caption_format]" id="caption_format" class="regular-text">
+                        <select name="autoimta_settings[caption_format]" id="caption_format" class="regular-text">
                             <option value="disabled" <?php selected($settings['caption_format'], 'disabled'); ?>>
-                                <?php _e('Не изменять', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Do not change', 'auto-image-tags'); ?>
                             </option>
                             <option value="filename" <?php selected($settings['caption_format'], 'filename'); ?>>
-                                <?php _e('Название файла', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Filename', 'auto-image-tags'); ?>
                             </option>
                             <option value="posttitle" <?php selected($settings['caption_format'], 'posttitle'); ?>>
-                                <?php _e('Заголовок записи/страницы', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Post/Page Title', 'auto-image-tags'); ?>
                             </option>
                             <option value="custom" <?php selected($settings['caption_format'], 'custom'); ?>>
-                                <?php _e('Произвольный текст', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Custom Text', 'auto-image-tags'); ?>
                             </option>
                         </select>
-                        <label class="ait-checkbox-inline">
-                            <input type="checkbox" name="ait_settings[overwrite_caption]" value="1" 
+                        <label class="autoimta-checkbox-inline">
+                            <input type="checkbox" name="autoimta_settings[overwrite_caption]" value="1" 
                                    <?php checked($settings['overwrite_caption'], '1'); ?>>
-                            <?php _e('Перезаписывать существующие', 'auto-image-tags'); ?>
+                            <?php esc_html_e('Overwrite existing', 'auto-image-tags'); ?>
                         </label>
                     </td>
                 </tr>
@@ -427,73 +667,73 @@ public function init() {
                 <!-- DESCRIPTION -->
                 <tr>
                     <th scope="row">
-                        <label for="description_format"><?php _e('Формат Description (описание)', 'auto-image-tags'); ?></label>
+                        <label for="description_format"><?php esc_html_e('Description Format', 'auto-image-tags'); ?></label>
                     </th>
                     <td>
-                        <select name="ait_settings[description_format]" id="description_format" class="regular-text">
+                        <select name="autoimta_settings[description_format]" id="description_format" class="regular-text">
                             <option value="disabled" <?php selected($settings['description_format'], 'disabled'); ?>>
-                                <?php _e('Не изменять', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Do not change', 'auto-image-tags'); ?>
                             </option>
                             <option value="filename" <?php selected($settings['description_format'], 'filename'); ?>>
-                                <?php _e('Название файла', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Filename', 'auto-image-tags'); ?>
                             </option>
                             <option value="posttitle" <?php selected($settings['description_format'], 'posttitle'); ?>>
-                                <?php _e('Заголовок записи/страницы', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Post/Page Title', 'auto-image-tags'); ?>
                             </option>
                             <option value="custom" <?php selected($settings['description_format'], 'custom'); ?>>
-                                <?php _e('Произвольный текст', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Custom Text', 'auto-image-tags'); ?>
                             </option>
                         </select>
-                        <label class="ait-checkbox-inline">
-                            <input type="checkbox" name="ait_settings[overwrite_description]" value="1" 
+                        <label class="autoimta-checkbox-inline">
+                            <input type="checkbox" name="autoimta_settings[overwrite_description]" value="1" 
                                    <?php checked($settings['overwrite_description'], '1'); ?>>
-                            <?php _e('Перезаписывать существующие', 'auto-image-tags'); ?>
+                            <?php esc_html_e('Overwrite existing', 'auto-image-tags'); ?>
                         </label>
                     </td>
                 </tr>
             </table>
             
             <!-- Обработка имен файлов -->
-            <h2><?php _e('Обработка имен файлов', 'auto-image-tags'); ?></h2>
+            <h2><?php esc_html_e('Filename Processing', 'auto-image-tags'); ?></h2>
             <table class="form-table">
                 <tr>
-                    <th scope="row"><?php _e('Опции очистки', 'auto-image-tags'); ?></th>
+                    <th scope="row"><?php esc_html_e('Cleanup Options', 'auto-image-tags'); ?></th>
                     <td>
                         <fieldset>
                             <label>
-                                <input type="checkbox" name="ait_settings[remove_hyphens]" value="1" 
+                                <input type="checkbox" name="autoimta_settings[remove_hyphens]" value="1" 
                                        <?php checked($settings['remove_hyphens'], '1'); ?>>
-                                <?php _e('Заменять дефисы и подчеркивания на пробелы', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Replace hyphens and underscores with spaces', 'auto-image-tags'); ?>
                             </label>
                             <br>
                             <label>
-                                <input type="checkbox" name="ait_settings[remove_dots]" value="1" 
+                                <input type="checkbox" name="autoimta_settings[remove_dots]" value="1" 
                                        <?php checked($settings['remove_dots'], '1'); ?>>
-                                <?php _e('Удалять точки из имен файлов', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Remove dots from filenames', 'auto-image-tags'); ?>
                             </label>
                             <br>
                             <label>
-                                <input type="checkbox" name="ait_settings[capitalize_words]" value="1" 
+                                <input type="checkbox" name="autoimta_settings[capitalize_words]" value="1" 
                                        <?php checked($settings['capitalize_words'], '1'); ?>>
-                                <?php _e('Делать первую букву каждого слова заглавной', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Capitalize first letter of each word', 'auto-image-tags'); ?>
                             </label>
                             <br>
                             <label>
-                                <input type="checkbox" name="ait_settings[remove_numbers]" value="1" 
+                                <input type="checkbox" name="autoimta_settings[remove_numbers]" value="1" 
                                        <?php checked($settings['remove_numbers'], '1'); ?>>
-                                <?php _e('Удалять номера камер (DSC_0001, IMG_20231225)', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Remove camera numbers (DSC_0001, IMG_20231225)', 'auto-image-tags'); ?>
                             </label>
                             <br>
                             <label>
-                                <input type="checkbox" name="ait_settings[camelcase_split]" value="1" 
+                                <input type="checkbox" name="autoimta_settings[camelcase_split]" value="1" 
                                        <?php checked($settings['camelcase_split'], '1'); ?>>
-                                <?php _e('Разделять CamelCase (PhotoOfProduct → Photo Of Product)', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Split CamelCase (PhotoOfProduct → Photo Of Product)', 'auto-image-tags'); ?>
                             </label>
                             <br>
                             <label>
-                                <input type="checkbox" name="ait_settings[remove_size_suffix]" value="1" 
+                                <input type="checkbox" name="autoimta_settings[remove_size_suffix]" value="1" 
                                        <?php checked($settings['remove_size_suffix'], '1'); ?>>
-                                <?php _e('Удалять суффиксы размеров (-300x200, -scaled, -thumb)', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Remove size suffixes (-300x200, -scaled, -thumb)', 'auto-image-tags'); ?>
                             </label>
                         </fieldset>
                     </td>
@@ -501,80 +741,116 @@ public function init() {
                 
                 <tr>
                     <th scope="row">
-                        <label for="stop_words"><?php _e('Стоп-слова', 'auto-image-tags'); ?></label>
+                        <label for="stop_words"><?php esc_html_e('Stop Words', 'auto-image-tags'); ?></label>
                     </th>
                     <td>
-                        <input type="text" name="ait_settings[stop_words]" id="stop_words" 
-                               value="<?php echo esc_attr($settings['stop_words']); ?>" class="large-text">
+                        <input type="text" name="autoimta_settings[stop_words]" id="stop_words" 
+                               value="<?php echo esc_attr((is_array($settings) && isset($settings['stop_words'])) ? $settings['stop_words'] : 'DSC, IMG, image, photo, picture, pic, screenshot, foto'); ?>" class="large-text">
                         <p class="description">
-                            <?php _e('Слова для удаления из имен файлов, разделенные запятыми', 'auto-image-tags'); ?>
+                            <?php esc_html_e('Words to remove from filenames, comma-separated', 'auto-image-tags'); ?>
                         </p>
                     </td>
                 </tr>
             </table>
             
             <!-- Дополнительные настройки -->
-            <h2><?php _e('Дополнительные настройки', 'auto-image-tags'); ?></h2>
+            <h2><?php esc_html_e('Additional Settings', 'auto-image-tags'); ?></h2>
             <table class="form-table">
                 <tr>
-                    <th scope="row"><?php _e('Режим работы', 'auto-image-tags'); ?></th>
+                    <th scope="row"><?php esc_html_e('Operation Mode', 'auto-image-tags'); ?></th>
                     <td>
                         <fieldset>
                             <label>
-                                <input type="checkbox" name="ait_settings[process_on_upload]" value="1" 
+                                <input type="checkbox" name="autoimta_settings[process_on_upload]" value="1" 
                                        <?php checked($settings['process_on_upload'], '1'); ?>>
-                                <?php _e('Обрабатывать изображения при загрузке', 'auto-image-tags'); ?>
+                                <?php esc_html_e('Process images on upload', 'auto-image-tags'); ?>
                             </label>
                             <br>
-                            <label class="ait-important-option">
-                                <input type="checkbox" name="ait_settings[test_mode]" value="1" 
+                            <label class="autoimta-important-option">
+                                <input type="checkbox" name="autoimta_settings[test_mode]" value="1" 
                                        <?php checked($settings['test_mode'], '1'); ?>>
-                                <strong><?php _e('Тестовый режим (без сохранения изменений)', 'auto-image-tags'); ?></strong>
+                                <strong><?php esc_html_e('Test Mode (no changes saved)', 'auto-image-tags'); ?></strong>
                             </label>
                         </fieldset>
                     </td>
                 </tr>
             </table>
             
+            <!-- WooCommerce интеграция -->
+            <?php if (class_exists('WooCommerce')): ?>
+            <h2><?php esc_html_e('WooCommerce Integration', 'auto-image-tags'); ?></h2>
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php esc_html_e('Main Settings', 'auto-image-tags'); ?></th>
+                    <td>
+                        <fieldset>
+                            <label>
+                                <input type="checkbox" name="autoimta_settings[woocommerce_enabled]" value="1" 
+                                       <?php checked($settings['woocommerce_enabled'], '1'); ?>>
+                                <strong><?php esc_html_e('Enable WooCommerce product image processing', 'auto-image-tags'); ?></strong>
+                            </label>
+                            <br>
+                            <label>
+                                <input type="checkbox" name="autoimta_settings[woocommerce_process_gallery]" value="1" 
+                                       <?php checked($settings['woocommerce_process_gallery'], '1'); ?>>
+                                <?php esc_html_e('Process product gallery (additional images)', 'auto-image-tags'); ?>
+                            </label>
+                        </fieldset>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php esc_html_e('Use in tags:', 'auto-image-tags'); ?></th>
+                    <td>
+                        <fieldset>
+                            <label>
+                                <input type="checkbox" name="autoimta_settings[woocommerce_use_product_title]" value="1" 
+                                       <?php checked($settings['woocommerce_use_product_title'], '1'); ?>>
+                                <?php esc_html_e('Product title', 'auto-image-tags'); ?>
+                            </label>
+                            <br>
+                            <label>
+                                <input type="checkbox" name="autoimta_settings[woocommerce_use_category]" value="1" 
+                                       <?php checked($settings['woocommerce_use_category'], '1'); ?>>
+                                <?php esc_html_e('Product category', 'auto-image-tags'); ?>
+                            </label>
+                            <br>
+                            <label>
+                                <input type="checkbox" name="autoimta_settings[woocommerce_use_sku]" value="1" 
+                                       <?php checked($settings['woocommerce_use_sku'], '1'); ?>>
+                                <?php esc_html_e('Product SKU', 'auto-image-tags'); ?>
+                            </label>
+                        </fieldset>
+                        <p class="description">
+                            <?php esc_html_e('This data will be added to processed product image tags', 'auto-image-tags'); ?>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+            <?php else: ?>
+            <h2><?php esc_html_e('WooCommerce Integration', 'auto-image-tags'); ?></h2>
+            <div class="autoimta-notice autoimta-notice-warning">
+                <p><?php esc_html_e('WooCommerce is not installed. Install and activate WooCommerce to use this feature.', 'auto-image-tags'); ?></p>
+            </div>
+            <?php endif; ?>
+            
             <?php submit_button(); ?>
         </form>
-        
-        <script>
-        jQuery(document).ready(function($) {
-            // Показ/скрытие полей для произвольного текста
-            $('#alt_format').on('change', function() {
-                $('#alt_custom_row').toggle($(this).val() === 'custom');
-            });
-            
-            $('#title_format').on('change', function() {
-                $('#title_custom_row').toggle($(this).val() === 'custom');
-            });
-            
-            $('#caption_format').on('change', function() {
-                $('#caption_custom_row').toggle($(this).val() === 'custom');
-            });
-            
-            $('#description_format').on('change', function() {
-                $('#description_custom_row').toggle($(this).val() === 'custom');
-            });
-        });
-        </script>
         <?php
     }
-    
-    /**
+	
+	/**
      * Вкладка предпросмотра
      */
     private function render_preview_tab() {
         ?>
-        <div class="ait-preview-box">
-            <h2><?php _e('Предпросмотр изменений', 'auto-image-tags'); ?></h2>
-            <p><?php _e('Здесь вы можете посмотреть, как будут выглядеть теги после обработки, без внесения реальных изменений.', 'auto-image-tags'); ?></p>
+        <div class="autoimta-preview-box">
+            <h2><?php esc_html_e('Preview Changes', 'auto-image-tags'); ?></h2>
+            <p><?php esc_html_e('Here you can see how tags will look after processing, without making real changes.', 'auto-image-tags'); ?></p>
             
-            <div class="ait-preview-filters">
-                <h3><?php _e('Фильтры', 'auto-image-tags'); ?></h3>
+            <div class="autoimta-preview-filters">
+                <h3><?php esc_html_e('Filters', 'auto-image-tags'); ?></h3>
                 <div class="filter-row">
-                    <label for="preview_limit"><?php _e('Количество изображений:', 'auto-image-tags'); ?></label>
+                    <label for="preview_limit"><?php esc_html_e('Number of images:', 'auto-image-tags'); ?></label>
                     <select id="preview_limit">
                         <option value="10">10</option>
                         <option value="25">25</option>
@@ -582,79 +858,25 @@ public function init() {
                         <option value="100">100</option>
                     </select>
                     
-                    <label for="preview_filter"><?php _e('Показать:', 'auto-image-tags'); ?></label>
+                    <label for="preview_filter"><?php esc_html_e('Show:', 'auto-image-tags'); ?></label>
                     <select id="preview_filter">
-                        <option value="all"><?php _e('Все изображения', 'auto-image-tags'); ?></option>
-                        <option value="no_alt"><?php _e('Без ALT тега', 'auto-image-tags'); ?></option>
-                        <option value="no_title"><?php _e('Без TITLE тега', 'auto-image-tags'); ?></option>
-                        <option value="no_tags"><?php _e('Без тегов', 'auto-image-tags'); ?></option>
+                        <option value="all"><?php esc_html_e('All images', 'auto-image-tags'); ?></option>
+                        <option value="no_alt"><?php esc_html_e('Without ALT tag', 'auto-image-tags'); ?></option>
+                        <option value="no_title"><?php esc_html_e('Without TITLE tag', 'auto-image-tags'); ?></option>
+                        <option value="no_tags"><?php esc_html_e('Without tags', 'auto-image-tags'); ?></option>
                     </select>
                     
                     <button id="preview_load_btn" class="button button-primary">
-                        <?php _e('Загрузить предпросмотр', 'auto-image-tags'); ?>
+                        <?php esc_html_e('Load Preview', 'auto-image-tags'); ?>
                     </button>
                 </div>
             </div>
             
             <div id="preview_results" style="display:none;">
-                <h3><?php _e('Результаты предпросмотра', 'auto-image-tags'); ?></h3>
+                <h3><?php esc_html_e('Preview Results', 'auto-image-tags'); ?></h3>
                 <div id="preview_content"></div>
             </div>
         </div>
-        
-        <script>
-        jQuery(document).ready(function($) {
-            $('#preview_load_btn').on('click', function() {
-                var limit = $('#preview_limit').val();
-                var filter = $('#preview_filter').val();
-                
-                $('#preview_content').html('<p><?php _e('Загрузка...', 'auto-image-tags'); ?></p>');
-                $('#preview_results').show();
-                
-                $.ajax({
-                    url: ajaxurl,
-                    type: 'POST',
-                    data: {
-                        action: 'ait_preview_changes',
-                        limit: limit,
-                        filter: filter,
-                        nonce: '<?php echo esc_attr(wp_create_nonce('ait_ajax_nonce')); ?>'
-                    },
-                    success: function(response) {
-                        if (response.success) {
-                            var html = '<table class="wp-list-table widefat fixed striped">';
-                            html += '<thead><tr>';
-                            html += '<th><?php _e('Изображение', 'auto-image-tags'); ?></th>';
-                            html += '<th><?php _e('Текущие значения', 'auto-image-tags'); ?></th>';
-                            html += '<th><?php _e('Новые значения', 'auto-image-tags'); ?></th>';
-                            html += '</tr></thead><tbody>';
-                            
-                            response.data.images.forEach(function(img) {
-                                html += '<tr>';
-                                html += '<td><img src="' + img.thumb + '" style="max-width:100px;"><br>' + img.filename + '</td>';
-                                html += '<td>';
-                                html += '<strong>ALT:</strong> ' + (img.current.alt || '<em><?php _e('пусто', 'auto-image-tags'); ?></em>') + '<br>';
-                                html += '<strong>TITLE:</strong> ' + (img.current.title || '<em><?php _e('пусто', 'auto-image-tags'); ?></em>') + '<br>';
-                                html += '<strong>CAPTION:</strong> ' + (img.current.caption || '<em><?php _e('пусто', 'auto-image-tags'); ?></em>') + '<br>';
-                                html += '<strong>DESCRIPTION:</strong> ' + (img.current.description || '<em><?php _e('пусто', 'auto-image-tags'); ?></em>');
-                                html += '</td>';
-                                html += '<td>';
-                                html += '<strong>ALT:</strong> <span class="' + (img.new.alt !== img.current.alt ? 'changed' : '') + '">' + (img.new.alt || '<em><?php _e('без изменений', 'auto-image-tags'); ?></em>') + '</span><br>';
-                                html += '<strong>TITLE:</strong> <span class="' + (img.new.title !== img.current.title ? 'changed' : '') + '">' + (img.new.title || '<em><?php _e('без изменений', 'auto-image-tags'); ?></em>') + '</span><br>';
-                                html += '<strong>CAPTION:</strong> <span class="' + (img.new.caption !== img.current.caption ? 'changed' : '') + '">' + (img.new.caption || '<em><?php _e('без изменений', 'auto-image-tags'); ?></em>') + '</span><br>';
-                                html += '<strong>DESCRIPTION:</strong> <span class="' + (img.new.description !== img.current.description ? 'changed' : '') + '">' + (img.new.description || '<em><?php _e('без изменений', 'auto-image-tags'); ?></em>') + '</span>';
-                                html += '</td>';
-                                html += '</tr>';
-                            });
-                            
-                            html += '</tbody></table>';
-                            $('#preview_content').html(html);
-                        }
-                    }
-                });
-            });
-        });
-        </script>
         <?php
     }
     
@@ -662,266 +884,94 @@ public function init() {
      * Вкладка обработки изображений
      */
     private function render_process_tab() {
-        ?>
-        <div class="ait-process-box">
-            <h2><?php _e('Обработка существующих изображений', 'auto-image-tags'); ?></h2>
-            
-            <?php 
-            $settings = get_option('ait_settings');
-            if ($settings['test_mode'] == '1') {
+    ?>
+    <div class="autoimta-process-box">
+        <h2><?php esc_html_e('Process Existing Images', 'auto-image-tags'); ?></h2>
+        
+        <?php 
+        $settings = get_option('autoimta_settings', array());
+        if (isset($settings['test_mode']) && $settings['test_mode'] == '1') {
                 ?>
-                <div class="ait-notice ait-notice-info">
-                    <p><strong><?php _e('Тестовый режим активен!', 'auto-image-tags'); ?></strong> 
-                    <?php _e('Изменения не будут сохранены. Отключите тестовый режим в настройках для реальной обработки.', 'auto-image-tags'); ?></p>
+                <div class="autoimta-notice autoimta-notice-info">
+                    <p><strong><?php esc_html_e('Test Mode Active!', 'auto-image-tags'); ?></strong> 
+                    <?php esc_html_e('Changes will not be saved. Disable test mode in settings for real processing.', 'auto-image-tags'); ?></p>
                 </div>
                 <?php
             }
             ?>
             
-            <div class="ait-notice ait-notice-warning">
-                <p><strong><?php _e('Внимание!', 'auto-image-tags'); ?></strong> 
-                <?php _e('Перед массовой обработкой рекомендуется создать резервную копию базы данных.', 'auto-image-tags'); ?></p>
+            <div class="autoimta-notice autoimta-notice-warning">
+                <p><strong><?php esc_html_e('Warning!', 'auto-image-tags'); ?></strong> 
+                <?php esc_html_e('It is recommended to create a database backup before bulk processing.', 'auto-image-tags'); ?></p>
             </div>
             
-            <div class="ait-filters">
-    <h3><?php _e('Фильтры обработки', 'auto-image-tags'); ?></h3>
-    <table class="form-table">
-        <tr>
-            <th scope="row">
-                <label for="date_filter"><?php _e('Период загрузки:', 'auto-image-tags'); ?></label>
-            </th>
-            <td>
-                <select id="date_filter" class="regular-text">
-                    <option value="all"><?php _e('Все время', 'auto-image-tags'); ?></option>
-                    <option value="today"><?php _e('Сегодня', 'auto-image-tags'); ?></option>
-                    <option value="week"><?php _e('Последняя неделя', 'auto-image-tags'); ?></option>
-                    <option value="month"><?php _e('Последний месяц', 'auto-image-tags'); ?></option>
-                    <option value="year"><?php _e('Последний год', 'auto-image-tags'); ?></option>
-                </select>
-            </td>
-        </tr>
-        <tr>
-            <th scope="row">
-                <label for="status_filter"><?php _e('Статус:', 'auto-image-tags'); ?></label>
-            </th>
-            <td>
-                <select id="status_filter" class="regular-text">
-                    <option value="all"><?php _e('Все изображения', 'auto-image-tags'); ?></option>
-                    <option value="no_alt"><?php _e('Без ALT', 'auto-image-tags'); ?></option>
-                    <option value="no_title"><?php _e('Без TITLE', 'auto-image-tags'); ?></option>
-                    <option value="no_tags"><?php _e('Без тегов', 'auto-image-tags'); ?></option>
-                </select>
-            </td>
-        </tr>
-        <tr>
-            <th scope="row">
-                <label for="post_filter"><?php _e('Пост/Страница:', 'auto-image-tags'); ?></label>
-            </th>
-            <td>
-                <select id="post_filter" class="regular-text">
-                    <option value="all"><?php _e('Все', 'auto-image-tags'); ?></option>
-                    <option value="loading..."><?php _e('Загрузка...', 'auto-image-tags'); ?></option>
-                </select>
-            </td>
-        </tr>
-    </table>
-</div>
-            
-            <div id="ait-stats">
-                <p><?php _e('Загрузка статистики...', 'auto-image-tags'); ?></p>
+            <div class="autoimta-filters">
+                <h3><?php esc_html_e('Processing Filters', 'auto-image-tags'); ?></h3>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="date_filter"><?php esc_html_e('Upload Period:', 'auto-image-tags'); ?></label>
+                        </th>
+                        <td>
+                            <select id="date_filter" class="regular-text">
+                                <option value="all"><?php esc_html_e('All time', 'auto-image-tags'); ?></option>
+                                <option value="today"><?php esc_html_e('Today', 'auto-image-tags'); ?></option>
+                                <option value="week"><?php esc_html_e('Last week', 'auto-image-tags'); ?></option>
+                                <option value="month"><?php esc_html_e('Last month', 'auto-image-tags'); ?></option>
+                                <option value="year"><?php esc_html_e('Last year', 'auto-image-tags'); ?></option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="status_filter"><?php esc_html_e('Status:', 'auto-image-tags'); ?></label>
+                        </th>
+                        <td>
+                            <select id="status_filter" class="regular-text">
+                                <option value="all"><?php esc_html_e('All images', 'auto-image-tags'); ?></option>
+                                <option value="no_alt"><?php esc_html_e('Without ALT', 'auto-image-tags'); ?></option>
+                                <option value="no_title"><?php esc_html_e('Without TITLE', 'auto-image-tags'); ?></option>
+                                <option value="no_tags"><?php esc_html_e('Without tags', 'auto-image-tags'); ?></option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="post_filter"><?php esc_html_e('Post/Page:', 'auto-image-tags'); ?></label>
+                        </th>
+                        <td>
+                            <select id="post_filter" class="regular-text">
+                                <option value="all"><?php esc_html_e('All', 'auto-image-tags'); ?></option>
+                                <option value="loading..."><?php esc_html_e('Loading...', 'auto-image-tags'); ?></option>
+                            </select>
+                        </td>
+                    </tr>
+                </table>
             </div>
             
-            <button id="ait-process-btn" class="button button-primary button-hero" disabled>
-                <?php _e('Начать обработку', 'auto-image-tags'); ?>
+            <div id="autoimta-stats">
+                <p><?php esc_html_e('Loading statistics...', 'auto-image-tags'); ?></p>
+            </div>
+            
+            <button id="autoimta-process-btn" class="button button-primary button-hero" disabled>
+                <?php esc_html_e('Start Processing', 'auto-image-tags'); ?>
             </button>
             
-            <div id="ait-progress" style="display:none;">
+            <div id="autoimta-progress" style="display:none;">
                 <div class="progress-bar-wrapper">
                     <div class="progress-bar">
                         <div class="progress-bar-fill" style="width: 0%;"></div>
                     </div>
                     <div class="progress-text">0%</div>
                 </div>
-                <p id="ait-status-text"></p>
+                <p id="autoimta-status-text"></p>
             </div>
             
-            <div id="ait-results" style="display:none;">
-                <h3><?php _e('Результаты обработки:', 'auto-image-tags'); ?></h3>
-                <div id="ait-results-content"></div>
+            <div id="autoimta-results" style="display:none;">
+                <h3><?php esc_html_e('Processing Results:', 'auto-image-tags'); ?></h3>
+                <div id="autoimta-results-content"></div>
             </div>
         </div>
-        
-        <script>
-        jQuery(document).ready(function($) {
-            var totalImages = 0;
-            var processedImages = 0;
-            var successCount = 0;
-            var errorCount = 0;
-            var skippedCount = 0;
-            
-            // Загрузка списка постов для фильтра
-            $.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'ait_get_filter_options',
-                    nonce: '<?php echo esc_attr(wp_create_nonce('ait_ajax_nonce')); ?>'
-                },
-                success: function(response) {
-                    if (response.success) {
-                        var options = '<option value="all"><?php _e('Все', 'auto-image-tags'); ?></option>';
-                        response.data.posts.forEach(function(post) {
-                            options += '<option value="' + post.ID + '">' + post.post_title + '</option>';
-                        });
-                        $('#post_filter').html(options);
-                    }
-                }
-            });
-            
-            // Получение количества изображений с фильтрами
-            function getImagesCount() {
-                var filters = {
-                    date: $('#date_filter').val(),
-                    status: $('#status_filter').val(),
-                    post: $('#post_filter').val()
-                };
-                
-                $.ajax({
-                    url: ajaxurl,
-                    type: 'POST',
-                    data: {
-                        action: 'ait_get_images_count',
-                        filters: filters,
-                        nonce: '<?php echo esc_attr(wp_create_nonce('ait_ajax_nonce')); ?>'
-                    },
-                    success: function(response) {
-                        if (response.success) {
-                            totalImages = response.data.total;
-                            var withoutAlt = response.data.without_alt;
-                            var withoutTitle = response.data.without_title;
-                            var needsProcessing = response.data.needs_processing;
-                            
-                            $('#ait-stats').html(
-                                '<div class="ait-stats-grid">' +
-                                '<div class="ait-stat-item">' +
-                                    '<span class="ait-stat-label"><?php _e('Всего изображений:', 'auto-image-tags'); ?></span>' +
-                                    '<span class="ait-stat-value">' + totalImages + '</span>' +
-                                '</div>' +
-                                '<div class="ait-stat-item">' +
-                                    '<span class="ait-stat-label"><?php _e('Без ALT тега:', 'auto-image-tags'); ?></span>' +
-                                    '<span class="ait-stat-value">' + withoutAlt + '</span>' +
-                                '</div>' +
-                                '<div class="ait-stat-item">' +
-                                    '<span class="ait-stat-label"><?php _e('Без TITLE тега:', 'auto-image-tags'); ?></span>' +
-                                    '<span class="ait-stat-value">' + withoutTitle + '</span>' +
-                                '</div>' +
-                                '<div class="ait-stat-item">' +
-                                    '<span class="ait-stat-label"><?php _e('Будет обработано:', 'auto-image-tags'); ?></span>' +
-                                    '<span class="ait-stat-value">' + needsProcessing + '</span>' +
-                                '</div>' +
-                                '</div>'
-                            );
-                            
-                            if (totalImages > 0) {
-                                $('#ait-process-btn').prop('disabled', false);
-                            } else {
-                                $('#ait-stats').append('<p class="notice notice-info"><?php _e('Нет изображений для обработки с выбранными фильтрами.', 'auto-image-tags'); ?></p>');
-                            }
-                        }
-                    }
-                });
-            }
-            
-            // Обновление статистики при изменении фильтров
-            $('#date_filter, #status_filter, #post_filter').on('change', function() {
-                getImagesCount();
-            });
-            
-            // Обработка изображений
-            function processImages(offset) {
-                var filters = {
-                    date: $('#date_filter').val(),
-                    status: $('#status_filter').val(),
-                    post: $('#post_filter').val()
-                };
-                
-                $.ajax({
-                    url: ajaxurl,
-                    type: 'POST',
-                    data: {
-                        action: 'ait_process_existing_images',
-                        offset: offset,
-                        filters: filters,
-                        nonce: '<?php echo esc_attr(wp_create_nonce('ait_ajax_nonce')); ?>'
-                    },
-                    success: function(response) {
-                        if (response.success) {
-                            processedImages += response.data.processed;
-                            successCount += response.data.success;
-                            errorCount += response.data.errors;
-                            skippedCount += response.data.skipped;
-                            
-                            var progress = Math.round((processedImages / totalImages) * 100);
-                            $('.progress-bar-fill').css('width', progress + '%');
-                            $('.progress-text').text(progress + '%');
-                            $('#ait-status-text').html(
-                                '<?php _e('Обработано:', 'auto-image-tags'); ?> ' + processedImages + ' / ' + totalImages +
-                                ' <span class="ait-status-details">(' +
-                                '<?php _e('Успешно:', 'auto-image-tags'); ?> ' + successCount +
-                                ', <?php _e('Пропущено:', 'auto-image-tags'); ?> ' + skippedCount +
-                                ', <?php _e('Ошибок:', 'auto-image-tags'); ?> ' + errorCount +
-                                ')</span>'
-                            );
-                            
-                            if (response.data.has_more) {
-                                processImages(offset + response.data.processed);
-                            } else {
-                                // Завершение обработки
-                                $('#ait-progress').hide();
-                                var modeText = response.data.test_mode ? ' (<?php _e('ТЕСТОВЫЙ РЕЖИМ', 'auto-image-tags'); ?>)' : '';
-                                $('#ait-results-content').html(
-                                    '<div class="notice notice-success">' +
-                                    '<p><strong><?php _e('Обработка завершена!', 'auto-image-tags'); ?></strong>' + modeText + '</p>' +
-                                    '<ul>' +
-                                    '<li><?php _e('Успешно обработано:', 'auto-image-tags'); ?> ' + successCount + '</li>' +
-                                    '<li><?php _e('Пропущено:', 'auto-image-tags'); ?> ' + skippedCount + '</li>' +
-                                    '<li><?php _e('Ошибок:', 'auto-image-tags'); ?> ' + errorCount + '</li>' +
-                                    '</ul>' +
-                                    (response.data.test_mode ? '<p><?php _e('Это был тестовый прогон. Изменения не были сохранены.', 'auto-image-tags'); ?></p>' : '') +
-                                    '</div>'
-                                );
-                                $('#ait-results').show();
-                                $('#ait-process-btn').text('<?php _e('Обработать заново', 'auto-image-tags'); ?>').prop('disabled', false);
-                                getImagesCount();
-                            }
-                        }
-                    }
-                });
-            }
-            
-            // Начало обработки
-            $('#ait-process-btn').on('click', function() {
-                var confirmMsg = '<?php _e('Вы уверены, что хотите начать обработку изображений?', 'auto-image-tags'); ?>';
-                <?php if ($settings['test_mode'] == '1'): ?>
-                confirmMsg = '<?php _e('Запустить тестовую обработку? (изменения не будут сохранены)', 'auto-image-tags'); ?>';
-                <?php endif; ?>
-                
-                if (confirm(confirmMsg)) {
-                    $(this).prop('disabled', true);
-                    $('#ait-progress').show();
-                    $('#ait-results').hide();
-                    processedImages = 0;
-                    successCount = 0;
-                    errorCount = 0;
-                    skippedCount = 0;
-                    processImages(0);
-                }
-            });
-            
-            // Инициализация
-            getImagesCount();
-        });
-        </script>
         <?php
     }
     
@@ -930,434 +980,1197 @@ public function init() {
      */
     private function render_stats_tab() {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'ait_process_log';
+        $table_name = $wpdb->prefix . 'autoimta_process_log';
         
         // Получаем последние записи из лога
-        $logs = $wpdb->get_results("SELECT * FROM $table_name ORDER BY process_date DESC LIMIT 20");
+        $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_name ORDER BY process_date DESC LIMIT %d", 20));
         
         // Общая статистика
         $total_processed = $wpdb->get_var("SELECT SUM(processed) FROM $table_name");
         $total_success = $wpdb->get_var("SELECT SUM(success) FROM $table_name");
         ?>
-        <div class="ait-stats-box">
-            <h2><?php _e('Статистика обработки', 'auto-image-tags'); ?></h2>
+        <div class="autoimta-stats-box">
+            <h2><?php esc_html_e('Processing Statistics', 'auto-image-tags'); ?></h2>
             
-            <div class="ait-stats-summary">
-                <h3><?php _e('Общая статистика', 'auto-image-tags'); ?></h3>
-                <div class="ait-stats-grid">
-                    <div class="ait-stat-item">
-                        <span class="ait-stat-label"><?php _e('Всего обработано:', 'auto-image-tags'); ?></span>
-                        <span class="ait-stat-value"><?php echo intval($total_processed); ?></span>
+            <div class="autoimta-stats-summary">
+                <h3><?php esc_html_e('Overall Statistics', 'auto-image-tags'); ?></h3>
+                <div class="autoimta-stats-grid">
+                    <div class="autoimta-stat-item">
+                        <span class="autoimta-stat-label"><?php esc_html_e('Total Processed:', 'auto-image-tags'); ?></span>
+                        <span class="autoimta-stat-value"><?php echo absint($total_processed); ?></span>
                     </div>
-                    <div class="ait-stat-item">
-                        <span class="ait-stat-label"><?php _e('Успешно обновлено:', 'auto-image-tags'); ?></span>
-                        <span class="ait-stat-value"><?php echo intval($total_success); ?></span>
+                    <div class="autoimta-stat-item">
+                        <span class="autoimta-stat-label"><?php esc_html_e('Successfully Updated:', 'auto-image-tags'); ?></span>
+                        <span class="autoimta-stat-value"><?php echo absint($total_success); ?></span>
                     </div>
                 </div>
             </div>
             
-            <h3><?php _e('История обработок', 'auto-image-tags'); ?></h3>
+            <h3><?php esc_html_e('Processing History', 'auto-image-tags'); ?></h3>
             <?php if ($logs): ?>
             <table class="wp-list-table widefat fixed striped">
                 <thead>
                     <tr>
-                        <th><?php _e('Дата', 'auto-image-tags'); ?></th>
-                        <th><?php _e('Всего', 'auto-image-tags'); ?></th>
-                        <th><?php _e('Обработано', 'auto-image-tags'); ?></th>
-                        <th><?php _e('Успешно', 'auto-image-tags'); ?></th>
-                        <th><?php _e('Пропущено', 'auto-image-tags'); ?></th>
-                        <th><?php _e('Ошибок', 'auto-image-tags'); ?></th>
-                        <th><?php _e('Режим', 'auto-image-tags'); ?></th>
+                        <th><?php esc_html_e('Date', 'auto-image-tags'); ?></th>
+                        <th><?php esc_html_e('Total', 'auto-image-tags'); ?></th>
+                        <th><?php esc_html_e('Processed', 'auto-image-tags'); ?></th>
+                        <th><?php esc_html_e('Success', 'auto-image-tags'); ?></th>
+                        <th><?php esc_html_e('Skipped', 'auto-image-tags'); ?></th>
+                        <th><?php esc_html_e('Errors', 'auto-image-tags'); ?></th>
+                        <th><?php esc_html_e('Mode', 'auto-image-tags'); ?></th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($logs as $log): ?>
                     <tr>
-                        <td><?php echo esc_html(wp_date(...)); ?></td>
-						<td><?php echo absint($log->total_images); ?></td>
-                        <td><?php echo $log->processed; ?></td>
-                        <td><?php echo $log->success; ?></td>
-                        <td><?php echo $log->skipped; ?></td>
-                        <td><?php echo $log->errors; ?></td>
-                        <td><?php echo esc_html($log->test_mode ? __('Тест', 'auto-image-tags') : __('Обычный', 'auto-image-tags')); ?></td>
+                        <td><?php echo esc_html(wp_date(get_option('date_format') . ' ' . get_option('time_format'), strtotime($log->process_date))); ?></td>
+                        <td><?php echo absint($log->total_images); ?></td>
+                        <td><?php echo absint($log->processed); ?></td>
+                        <td><?php echo absint($log->success); ?></td>
+                        <td><?php echo absint($log->skipped); ?></td>
+                        <td><?php echo absint($log->errors); ?></td>
+                        <td><?php echo esc_html($log->test_mode ? __('Test', 'auto-image-tags') : __('Normal', 'auto-image-tags')); ?></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
             <?php else: ?>
-            <p><?php _e('История обработок пуста.', 'auto-image-tags'); ?></p>
+            <p><?php esc_html_e('Processing history is empty.', 'auto-image-tags'); ?></p>
             <?php endif; ?>
         </div>
         <?php
     }
 
-	/**
+    /**
      * Вкладка "О плагине"
      */
     private function render_about_tab() {
         ?>
-        <div class="ait-about-box">
-            <h2><?php _e('О плагине Auto Image Tags', 'auto-image-tags'); ?></h2>
+        <div class="autoimta-about-box">
+            <h2><?php esc_html_e('About Auto Image Tags Plugin', 'auto-image-tags'); ?></h2>
             
-            <div class="ait-info-section">
-                <h3><?php _e('Информация о плагине', 'auto-image-tags'); ?></h3>
-                <table class="ait-info-table">
+            <div class="autoimta-info-section">
+                <h3><?php esc_html_e('Plugin Information', 'auto-image-tags'); ?></h3>
+                <table class="autoimta-info-table">
                     <tr>
-                        <td><strong><?php _e('Версия:', 'auto-image-tags'); ?></strong></td>
-                        <td><?php echo esc_html(AIT_PLUGIN_VERSION); ?></td>
+                        <td><strong><?php esc_html_e('Version:', 'auto-image-tags'); ?></strong></td>
+                        <td><?php echo esc_html(AUTOIMTA_VERSION); ?></td>
                     </tr>
                     <tr>
-                        <td><strong><?php _e('Автор:', 'auto-image-tags'); ?></strong></td>
+                        <td><strong><?php esc_html_e('Author:', 'auto-image-tags'); ?></strong></td>
                         <td>Shapovalov Bogdan</td>
                     </tr>
                     <tr>
-                        <td><strong><?php _e('Telegram:', 'auto-image-tags'); ?></strong></td>
-                        <td><a href="https://t.me/shapovalovbogdan" target="_blank">@shapovalovbogdan</a></td>
+                        <td><strong><?php esc_html_e('Telegram:', 'auto-image-tags'); ?></strong></td>
+                        <td><a href="https://t.me/shapovalovbogdan" target="_blank" rel="noopener noreferrer">@shapovalovbogdan</a></td>
+                    </tr>
+                    <tr>
+                        <td><strong><?php esc_html_e('GitHub:', 'auto-image-tags'); ?></strong></td>
+                        <td><a href="https://github.com/imrbogdan/auto-image-tags" target="_blank" rel="noopener noreferrer">Repository</a></td>
                     </tr>
                 </table>
             </div>
             
-            <div class="ait-info-section">
-    <h3><?php _e('Возможности плагина', 'auto-image-tags'); ?></h3>
-    <ul>
-        <li>✅ <?php _e('Автоматическое добавление ALT, TITLE, Caption и Description', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('Предпросмотр изменений перед применением', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('Индивидуальная настройка перезаписи для каждого атрибута', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('Фильтры для массовой обработки (по датам, постам, статусу)', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('Продвинутая очистка имен файлов', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('Стоп-слова для удаления лишних слов', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('Тестовый режим для безопасной проверки', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('История обработок и статистика', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('Поддержка нескольких языков', 'auto-image-tags'); ?></li>
-        <li>✅ <?php _e('Расширенные переменные в шаблонах', 'auto-image-tags'); ?></li>
-    </ul>
-</div>
+            <div class="autoimta-info-section">
+                <h3><?php esc_html_e('Plugin Features', 'auto-image-tags'); ?></h3>
+                <ul>
+                    <li>✅ <?php esc_html_e('Automatic ALT, TITLE, Caption and Description generation', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Preview changes before applying', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Individual overwrite settings for each attribute', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Bulk processing filters (by date, posts, status)', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Advanced filename cleanup', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Stop words to remove unwanted words', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Test mode for safe testing', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Processing history and statistics', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Multilingual support', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Extended template variables', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('Translation system (5 services)', 'auto-image-tags'); ?></li>
+                    <li>✅ <?php esc_html_e('WooCommerce integration', 'auto-image-tags'); ?></li>
+                </ul>
+            </div>
 
-<div class="ait-info-section">
-    <h3><?php _e('Что нового в версии 1.2.0', 'auto-image-tags'); ?></h3>
-    <ul>
-        <li>🆕 <?php _e('Предпросмотр изменений с таблицей "было → станет"', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Поддержка Caption и Description', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Индивидуальные настройки перезаписи для каждого атрибута', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Фильтры для обработки (по датам, постам, статусу)', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Улучшенная очистка имен (CamelCase, удаление номеров камер)', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Стоп-слова с возможностью добавления своих', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Тестовый режим', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Статистика и история обработок', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Выбор языка плагина', 'auto-image-tags'); ?></li>
-        <li>🆕 <?php _e('Удаление точек из имен файлов', 'auto-image-tags'); ?></li>
-    </ul>
-</div>
+            <div class="autoimta-info-section">
+                <h3><?php esc_html_e('What\'s New in Version 2.0.0', 'auto-image-tags'); ?></h3>
+                <ul>
+                    <li>🆕 <?php esc_html_e('Translation system with 5 services', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('WooCommerce integration', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Tools tab (bulk delete, export/import settings)', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Preview tab with before/after comparison', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Caption and Description support', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Individual overwrite settings', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Advanced filters', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Enhanced filename cleanup', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Custom stop words', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Test mode', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Statistics and history', 'auto-image-tags'); ?></li>
+                    <li>🆕 <?php esc_html_e('Language selection', 'auto-image-tags'); ?></li>
+                </ul>
+            </div>
             
-            <div class="ait-info-section">
-                <h3><?php _e('Поддержка и обратная связь', 'auto-image-tags'); ?></h3>
-                <p><?php _e('Если у вас есть вопросы, предложения или вы нашли ошибку, свяжитесь со мной через Telegram.', 'auto-image-tags'); ?></p>
-                <p><?php _e('Плагин распространяется бесплатно для помощи сообществу WordPress.', 'auto-image-tags'); ?></p>
-                <p><strong><?php _e('Все функции доступны бесплатно, без Pro версии!', 'auto-image-tags'); ?></strong></p>
+            <div class="autoimta-info-section">
+                <h3><?php esc_html_e('Support and Feedback', 'auto-image-tags'); ?></h3>
+                <p><?php esc_html_e('If you have questions, suggestions or found a bug, contact me via Telegram.', 'auto-image-tags'); ?></p>
+                <p><?php esc_html_e('Plugin is distributed for free to help the WordPress community.', 'auto-image-tags'); ?></p>
+                <p><strong><?php esc_html_e('All features are available for free, no Pro version!', 'auto-image-tags'); ?></strong></p>
             </div>
         </div>
         <?php
     }
-    
-/**
- * AJAX: Получение количества изображений
- */
-public function ajax_get_images_count() {
-    check_ajax_referer('ait_ajax_nonce', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error(array('message' => __('Недостаточно прав', 'auto-image-tags')));
-        return;
+	
+	/**
+     * Вкладка инструментов
+     */
+    private function render_tools_tab() {
+        ?>
+        <div class="autoimta-tools-box">
+            <!-- Массовое удаление тегов -->
+            <div class="autoimta-tool-section">
+                <h2><?php esc_html_e('Bulk Tag Removal', 'auto-image-tags'); ?></h2>
+                <p><?php esc_html_e('Remove ALT, TITLE, Caption and Description from selected images.', 'auto-image-tags'); ?></p>
+                
+                <div class="autoimta-notice autoimta-notice-warning">
+                    <p><strong><?php esc_html_e('Warning!', 'auto-image-tags'); ?></strong> 
+                    <?php esc_html_e('This action is irreversible. It is recommended to create a database backup before removal.', 'auto-image-tags'); ?></p>
+                </div>
+                
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><?php esc_html_e('What to remove:', 'auto-image-tags'); ?></th>
+                        <td>
+                            <fieldset>
+                                <label>
+                                    <input type="checkbox" id="remove_alt" checked>
+                                    <?php esc_html_e('ALT tags', 'auto-image-tags'); ?>
+                                </label>
+                                <br>
+                                <label>
+                                    <input type="checkbox" id="remove_title" checked>
+                                    <?php esc_html_e('TITLE (image title)', 'auto-image-tags'); ?>
+                                </label>
+                                <br>
+                                <label>
+                                    <input type="checkbox" id="remove_caption">
+                                    <?php esc_html_e('Caption', 'auto-image-tags'); ?>
+                                </label>
+                                <br>
+                                <label>
+                                    <input type="checkbox" id="remove_description">
+                                    <?php esc_html_e('Description', 'auto-image-tags'); ?>
+                                </label>
+                            </fieldset>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Filters:', 'auto-image-tags'); ?></th>
+                        <td>
+                            <label>
+                                <?php esc_html_e('Upload period:', 'auto-image-tags'); ?>
+                                <select id="remove_date_filter">
+                                    <option value="all"><?php esc_html_e('All time', 'auto-image-tags'); ?></option>
+                                    <option value="today"><?php esc_html_e('Today', 'auto-image-tags'); ?></option>
+                                    <option value="week"><?php esc_html_e('Last week', 'auto-image-tags'); ?></option>
+                                    <option value="month"><?php esc_html_e('Last month', 'auto-image-tags'); ?></option>
+                                    <option value="year"><?php esc_html_e('Last year', 'auto-image-tags'); ?></option>
+                                </select>
+                            </label>
+                        </td>
+                    </tr>
+                </table>
+                
+                <div id="remove-stats">
+                    <p><?php esc_html_e('Loading statistics...', 'auto-image-tags'); ?></p>
+                </div>
+                
+                <button id="remove-tags-btn" class="button button-secondary button-hero" disabled>
+                    <?php esc_html_e('Remove Tags', 'auto-image-tags'); ?>
+                </button>
+                
+                <div id="remove-progress" style="display:none;">
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar">
+                            <div class="progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <div class="progress-text">0%</div>
+                    </div>
+                    <p id="remove-status-text"></p>
+                </div>
+                
+                <div id="remove-results" style="display:none;">
+                    <h3><?php esc_html_e('Removal Results:', 'auto-image-tags'); ?></h3>
+                    <div id="remove-results-content"></div>
+                </div>
+            </div>
+            
+            <hr style="margin: 40px 0; border: none; border-top: 1px solid #ddd;">
+            
+            <!-- Экспорт/Импорт настроек -->
+            <div class="autoimta-tool-section">
+                <h2><?php esc_html_e('Export/Import Settings', 'auto-image-tags'); ?></h2>
+                <p><?php esc_html_e('Save plugin settings to a file or load previously saved settings.', 'auto-image-tags'); ?></p>
+                
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Export settings:', 'auto-image-tags'); ?></th>
+                        <td>
+                            <button id="export-settings-btn" class="button button-secondary">
+                                <?php esc_html_e('📥 Download Settings', 'auto-image-tags'); ?>
+                            </button>
+                            <p class="description">
+                                <?php esc_html_e('Saves current plugin settings to a JSON file', 'auto-image-tags'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Import settings:', 'auto-image-tags'); ?></th>
+                        <td>
+                            <input type="file" id="import-settings-file" accept=".json" style="display:none;">
+                            <button id="import-settings-btn" class="button button-secondary">
+                                <?php esc_html_e('📤 Upload Settings', 'auto-image-tags'); ?>
+                            </button>
+                            <p class="description">
+                                <?php esc_html_e('Loads settings from a previously saved JSON file', 'auto-image-tags'); ?>
+                            </p>
+                            <div id="import-result" style="margin-top: 10px;"></div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        <?php
     }
+
+    /**
+     * Вкладка перевода
+     */
+    private function render_translation_tab() {
+    $settings = get_option('autoimta_settings', array());
     
-    $settings = get_option('ait_settings', array());
-    $filters = isset($_POST['filters']) && is_array($_POST['filters']) ? array_map('sanitize_text_field', $_POST['filters']) : array();
-    
-    // Базовые аргументы запроса
-    $args = array(
-        'post_type' => 'attachment',
-        'post_mime_type' => 'image',
-        'post_status' => 'inherit',
-        'posts_per_page' => 1000,
-        'fields' => 'ids'
-    );
-    
-    // Фильтр по дате
-    if (!empty($filters['date']) && $filters['date'] !== 'all') {
-        $date_query = array();
-        switch ($filters['date']) {
-            case 'today':
-                $date_query = array('after' => 'today', 'inclusive' => true);
-                break;
-            case 'week':
-                $date_query = array('after' => '1 week ago', 'inclusive' => true);
-                break;
-            case 'month':
-                $date_query = array('after' => '1 month ago', 'inclusive' => true);
-                break;
-            case 'year':
-                $date_query = array('after' => '1 year ago', 'inclusive' => true);
-                break;
+    // Проверка настроек
+    if (!is_array($settings) || empty($settings)) {
+        $settings = array(
+            'translation_service' => 'google',
+            'translation_google_key' => '',
+            'translation_deepl_key' => '',
+            'translation_yandex_key' => '',
+            'translation_libre_url' => 'https://libretranslate.com',
+            'translation_mymemory_email' => '',
+            'translation_source_lang' => 'en',
+            'translation_target_lang' => 'ru',
+            'translation_auto_translate' => '0',
+            'translate_alt' => '1',
+            'translate_title' => '1',
+            'translate_caption' => '0',
+            'translate_description' => '0'
+        );
+    }
+        ?>
+        <div class="autoimta-translation-box">
+            <h2><?php esc_html_e('Automatic Image Tag Translation', 'auto-image-tags'); ?></h2>
+            <p><?php esc_html_e('Translate ALT, TITLE, Caption and Description using various translation services.', 'auto-image-tags'); ?></p>
+            
+            <form method="post" action="options.php" class="autoimta-settings-form">
+                <?php settings_fields('autoimta_settings_group'); ?>
+                
+                <!-- Выбор сервиса перевода -->
+                <h3><?php esc_html_e('API Settings', 'auto-image-tags'); ?></h3>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="translation_service"><?php esc_html_e('Translation Service:', 'auto-image-tags'); ?></label>
+                        </th>
+                        <td>
+                            <select name="autoimta_settings[translation_service]" id="translation_service" class="regular-text">
+                                <option value="google" <?php selected($settings['translation_service'], 'google'); ?>>Google Translate</option>
+                                <option value="deepl" <?php selected($settings['translation_service'], 'deepl'); ?>>DeepL</option>
+                                <option value="yandex" <?php selected($settings['translation_service'], 'yandex'); ?>>Yandex Translator</option>
+                                <option value="libre" <?php selected($settings['translation_service'], 'libre'); ?>>LibreTranslate (free)</option>
+                                <option value="mymemory" <?php selected($settings['translation_service'], 'mymemory'); ?>>MyMemory (free)</option>
+                            </select>
+                        </td>
+                    </tr>
+                </table>
+                
+                <!-- Google Translate API -->
+                <div id="google-settings" class="translation-service-settings" style="<?php echo $settings['translation_service'] != 'google' ? 'display:none;' : ''; ?>">
+                    <h4>Google Translate API</h4>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="translation_google_key"><?php esc_html_e('API Key:', 'auto-image-tags'); ?></label>
+                            </th>
+                            <td>
+                                <input type="text" name="autoimta_settings[translation_google_key]" id="translation_google_key" 
+                                       value="<?php echo esc_attr($settings['translation_google_key']); ?>" class="large-text">
+                                <p class="description">
+                                    <?php esc_html_e('Get API key:', 'auto-image-tags'); ?> 
+                                    <a href="https://cloud.google.com/translate/docs/setup" target="_blank" rel="noopener noreferrer">cloud.google.com/translate</a>
+                                    <br><?php esc_html_e('⚠️ Paid service. First $300 free for new users.', 'auto-image-tags'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- DeepL API -->
+                <div id="deepl-settings" class="translation-service-settings" style="<?php echo $settings['translation_service'] != 'deepl' ? 'display:none;' : ''; ?>">
+                    <h4>DeepL API</h4>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="translation_deepl_key"><?php esc_html_e('API Key:', 'auto-image-tags'); ?></label>
+                            </th>
+                            <td>
+                                <input type="text" name="autoimta_settings[translation_deepl_key]" id="translation_deepl_key" 
+                                       value="<?php echo esc_attr($settings['translation_deepl_key']); ?>" class="large-text">
+                                <p class="description">
+                                    <?php esc_html_e('Get API key:', 'auto-image-tags'); ?> 
+                                    <a href="https://www.deepl.com/pro-api" target="_blank" rel="noopener noreferrer">deepl.com/pro-api</a>
+                                    <br><?php esc_html_e('✅ Free: 500,000 characters per month', 'auto-image-tags'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- Яндекс.Переводчик API -->
+                <div id="yandex-settings" class="translation-service-settings" style="<?php echo $settings['translation_service'] != 'yandex' ? 'display:none;' : ''; ?>">
+                    <h4>Yandex Translator API</h4>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="translation_yandex_key"><?php esc_html_e('API Key:', 'auto-image-tags'); ?></label>
+                            </th>
+                            <td>
+                                <input type="text" name="autoimta_settings[translation_yandex_key]" id="translation_yandex_key" 
+                                       value="<?php echo esc_attr($settings['translation_yandex_key']); ?>" class="large-text">
+                                <p class="description">
+                                    <?php esc_html_e('Get API key:', 'auto-image-tags'); ?> 
+                                    <a href="https://cloud.yandex.ru/docs/translate/" target="_blank" rel="noopener noreferrer">cloud.yandex.ru/translate</a>
+                                    <br><?php esc_html_e('✅ Free: 1,000,000 characters per month', 'auto-image-tags'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- LibreTranslate -->
+                <div id="libre-settings" class="translation-service-settings" style="<?php echo $settings['translation_service'] != 'libre' ? 'display:none;' : ''; ?>">
+                    <h4>LibreTranslate</h4>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="translation_libre_url"><?php esc_html_e('Server URL:', 'auto-image-tags'); ?></label>
+                            </th>
+                            <td>
+                                <input type="url" name="autoimta_settings[translation_libre_url]" id="translation_libre_url" 
+                                       value="<?php echo esc_attr($settings['translation_libre_url']); ?>" class="large-text">
+                                <p class="description">
+                                    <?php esc_html_e('Public server:', 'auto-image-tags'); ?> <code>https://libretranslate.com</code>
+                                    <br><?php esc_html_e('Server list:', 'auto-image-tags'); ?> 
+                                    <a href="https://github.com/LibreTranslate/LibreTranslate#mirrors" target="_blank" rel="noopener noreferrer">github.com/LibreTranslate</a>
+                                    <br><?php esc_html_e('✅ Completely free and open-source', 'auto-image-tags'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- MyMemory -->
+                <div id="mymemory-settings" class="translation-service-settings" style="<?php echo $settings['translation_service'] != 'mymemory' ? 'display:none;' : ''; ?>">
+                    <h4>MyMemory API</h4>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="translation_mymemory_email"><?php esc_html_e('Email (optional):', 'auto-image-tags'); ?></label>
+                            </th>
+                            <td>
+                                <input type="email" name="autoimta_settings[translation_mymemory_email]" id="translation_mymemory_email" 
+                                       value="<?php echo esc_attr($settings['translation_mymemory_email']); ?>" class="large-text">
+                                <p class="description">
+                                    <?php esc_html_e('Email increases limit from 5,000 to 10,000 characters per day', 'auto-image-tags'); ?>
+                                    <br><?php esc_html_e('Information:', 'auto-image-tags'); ?> 
+                                    <a href="https://mymemory.translated.net/doc/spec.php" target="_blank" rel="noopener noreferrer">mymemory.translated.net</a>
+                                    <br><?php esc_html_e('✅ Free: 5,000 characters per day (10,000 with email)', 'auto-image-tags'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- Языки перевода -->
+                <h3><?php esc_html_e('Language Settings', 'auto-image-tags'); ?></h3>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="translation_source_lang"><?php esc_html_e('Source Language:', 'auto-image-tags'); ?></label>
+                        </th>
+                        <td>
+                            <select name="autoimta_settings[translation_source_lang]" id="translation_source_lang" class="regular-text">
+                                <option value="en" <?php selected($settings['translation_source_lang'], 'en'); ?>>English</option>
+                                <option value="ru" <?php selected($settings['translation_source_lang'], 'ru'); ?>>Русский</option>
+                                <option value="de" <?php selected($settings['translation_source_lang'], 'de'); ?>>Deutsch</option>
+                                <option value="fr" <?php selected($settings['translation_source_lang'], 'fr'); ?>>Français</option>
+                                <option value="es" <?php selected($settings['translation_source_lang'], 'es'); ?>>Español</option>
+                                <option value="it" <?php selected($settings['translation_source_lang'], 'it'); ?>>Italiano</option>
+                                <option value="pt" <?php selected($settings['translation_source_lang'], 'pt'); ?>>Português</option>
+                                <option value="zh" <?php selected($settings['translation_source_lang'], 'zh'); ?>>中文</option>
+                                <option value="ja" <?php selected($settings['translation_source_lang'], 'ja'); ?>>日本語</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="translation_target_lang"><?php esc_html_e('Target Language:', 'auto-image-tags'); ?></label>
+                        </th>
+                        <td>
+                            <select name="autoimta_settings[translation_target_lang]" id="translation_target_lang" class="regular-text">
+                                <option value="ru" <?php selected($settings['translation_target_lang'], 'ru'); ?>>Русский</option>
+                                <option value="en" <?php selected($settings['translation_target_lang'], 'en'); ?>>English</option>
+                                <option value="de" <?php selected($settings['translation_target_lang'], 'de'); ?>>Deutsch</option>
+                                <option value="fr" <?php selected($settings['translation_target_lang'], 'fr'); ?>>Français</option>
+                                <option value="es" <?php selected($settings['translation_target_lang'], 'es'); ?>>Español</option>
+                                <option value="it" <?php selected($settings['translation_target_lang'], 'it'); ?>>Italiano</option>
+                                <option value="pt" <?php selected($settings['translation_target_lang'], 'pt'); ?>>Português</option>
+                                <option value="zh" <?php selected($settings['translation_target_lang'], 'zh'); ?>>中文</option>
+                                <option value="ja" <?php selected($settings['translation_target_lang'], 'ja'); ?>>日本語</option>
+                            </select>
+                        </td>
+                    </tr>
+                </table>
+                
+                <!-- Что переводить -->
+                <h3><?php esc_html_e('What to Translate', 'auto-image-tags'); ?></h3>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Fields to translate:', 'auto-image-tags'); ?></th>
+                        <td>
+                            <fieldset>
+                                <label>
+                                    <input type="checkbox" name="autoimta_settings[translate_alt]" value="1" 
+                                           <?php checked($settings['translate_alt'], '1'); ?>>
+                                    <?php esc_html_e('ALT tags', 'auto-image-tags'); ?>
+                                </label>
+                                <br>
+                                <label>
+                                    <input type="checkbox" name="autoimta_settings[translate_title]" value="1" 
+                                           <?php checked($settings['translate_title'], '1'); ?>>
+                                    <?php esc_html_e('TITLE (image title)', 'auto-image-tags'); ?>
+                                </label>
+                                <br>
+                                <label>
+                                    <input type="checkbox" name="autoimta_settings[translate_caption]" value="1" 
+                                           <?php checked($settings['translate_caption'], '1'); ?>>
+                                    <?php esc_html_e('Caption', 'auto-image-tags'); ?>
+                                </label>
+                                <br>
+                                <label>
+                                    <input type="checkbox" name="autoimta_settings[translate_description]" value="1" 
+                                           <?php checked($settings['translate_description'], '1'); ?>>
+                                    <?php esc_html_e('Description', 'auto-image-tags'); ?>
+                                </label>
+                            </fieldset>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Auto-translation:', 'auto-image-tags'); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="autoimta_settings[translation_auto_translate]" value="1" 
+                                       <?php checked($settings['translation_auto_translate'], '1'); ?>>
+                                <?php esc_html_e('Automatically translate tags when uploading images', 'auto-image-tags'); ?>
+                            </label>
+                        </td>
+                    </tr>
+                </table>
+                
+                <?php submit_button(esc_html__('Save Settings', 'auto-image-tags')); ?>
+            </form>
+            
+            <hr style="margin: 40px 0;">
+            
+            <!-- Тестовый перевод -->
+            <div class="autoimta-test-translation">
+                <h3><?php esc_html_e('Test Translation', 'auto-image-tags'); ?></h3>
+                <p><?php esc_html_e('Check API functionality before bulk translation', 'auto-image-tags'); ?></p>
+                
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="test_text"><?php esc_html_e('Text to translate:', 'auto-image-tags'); ?></label>
+                        </th>
+                        <td>
+                            <input type="text" id="test_text" value="Beautiful sunset over the ocean" class="large-text">
+                        </td>
+                    </tr>
+                </table>
+                
+                <button id="test-translation-btn" class="button button-secondary">
+                    <?php esc_html_e('Test Translation', 'auto-image-tags'); ?>
+                </button>
+                
+                <div id="test-translation-result" style="margin-top: 20px;"></div>
+            </div>
+            
+            <hr style="margin: 40px 0;">
+            
+            <!-- Массовый перевод -->
+            <div class="autoimta-mass-translation">
+                <h3><?php esc_html_e('Bulk Translation', 'auto-image-tags'); ?></h3>
+                <p><?php esc_html_e('Translate all existing image tags', 'auto-image-tags'); ?></p>
+                
+                <div class="autoimta-notice autoimta-notice-warning">
+                    <p><strong><?php esc_html_e('Warning!', 'auto-image-tags'); ?></strong> 
+                    <?php esc_html_e('Bulk translation may take time and require API credits.', 'auto-image-tags'); ?></p>
+                </div>
+                
+                <div id="translation-stats">
+                    <p><?php esc_html_e('Loading statistics...', 'auto-image-tags'); ?></p>
+                </div>
+                
+                <button id="start-translation-btn" class="button button-primary button-hero" disabled>
+                    <?php esc_html_e('Start Translation', 'auto-image-tags'); ?>
+                </button>
+                
+                <div id="translation-progress" style="display:none;">
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar">
+                            <div class="progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <div class="progress-text">0%</div>
+                    </div>
+                    <p id="translation-status-text"></p>
+                </div>
+                
+                <div id="translation-results" style="display:none;">
+                    <h3><?php esc_html_e('Translation Results:', 'auto-image-tags'); ?></h3>
+                    <div id="translation-results-content"></div>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+	
+	/**
+     * AJAX: Получение количества изображений
+     */
+    public function ajax_get_images_count() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
         }
-        if (!empty($date_query)) {
-            $args['date_query'] = array($date_query);
+        
+        $settings = get_option('autoimta_settings', array());
+        $filters = isset($_POST['filters']) && is_array($_POST['filters']) ? array_map('sanitize_text_field', $_POST['filters']) : array();
+        
+        // Базовые аргументы запроса
+        $args = array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => 1000,
+            'fields' => 'ids'
+        );
+        
+        // Фильтр по дате
+        if (!empty($filters['date']) && $filters['date'] !== 'all') {
+            $date_query = array();
+            switch ($filters['date']) {
+                case 'today':
+                    $date_query = array('after' => 'today', 'inclusive' => true);
+                    break;
+                case 'week':
+                    $date_query = array('after' => '1 week ago', 'inclusive' => true);
+                    break;
+                case 'month':
+                    $date_query = array('after' => '1 month ago', 'inclusive' => true);
+                    break;
+                case 'year':
+                    $date_query = array('after' => '1 year ago', 'inclusive' => true);
+                    break;
+            }
+            if (!empty($date_query)) {
+                $args['date_query'] = array($date_query);
+            }
         }
-    }
-    
-    // Фильтр по посту
-    if (!empty($filters['post']) && $filters['post'] !== 'all') {
-        $args['post_parent'] = intval($filters['post']);
-    }
-    
-    $query = new WP_Query($args);
-    $total = $query->found_posts;
-    
-    if ($total > 5000) {
-        wp_send_json_error(array(
-            'message' => __('Слишком много изображений для подсчета. Используйте фильтры.', 'auto-image-tags')
+        
+        // Фильтр по посту
+        if (!empty($filters['post']) && $filters['post'] !== 'all') {
+            $args['post_parent'] = intval($filters['post']);
+        }
+        
+        $query = new WP_Query($args);
+        $total = $query->found_posts;
+        
+        if ($total > 5000) {
+            wp_send_json_error(array(
+                'message' => __('Too many images to count. Use filters.', 'auto-image-tags')
+            ));
+            return;
+        }
+        
+        $without_alt = 0;
+        $without_title = 0;
+        $needs_processing = 0;
+        
+        foreach ($query->posts as $id) {
+            $alt = get_post_meta($id, '_wp_attachment_image_alt', true);
+            $title = get_the_title($id);
+            
+            // Фильтр по статусу
+            if (!empty($filters['status'])) {
+                if ($filters['status'] === 'no_alt' && !empty($alt)) continue;
+                if ($filters['status'] === 'no_title' && !empty($title)) continue;
+                if ($filters['status'] === 'no_tags' && (!empty($alt) && !empty($title))) continue;
+            }
+            
+            if (empty($alt)) {
+                $without_alt++;
+            }
+            if (empty($title)) {
+                $without_title++;
+            }
+            
+            // Подсчет изображений для обработки
+            $will_process = false;
+            if (isset($settings['alt_format']) && $settings['alt_format'] !== 'disabled' && (isset($settings['overwrite_alt']) && $settings['overwrite_alt'] == '1' || empty($alt))) {
+                $will_process = true;
+            }
+            if (isset($settings['title_format']) && $settings['title_format'] !== 'disabled' && (isset($settings['overwrite_title']) && $settings['overwrite_title'] == '1' || empty($title))) {
+                $will_process = true;
+            }
+            if ($will_process) {
+                $needs_processing++;
+            }
+        }
+        
+        wp_send_json_success(array(
+            'total' => $total,
+            'without_alt' => $without_alt,
+            'without_title' => $without_title,
+            'needs_processing' => $needs_processing
         ));
-        return;
     }
     
-    $without_alt = 0;
-    $without_title = 0;
-    $needs_processing = 0;
-    
-    foreach ($query->posts as $id) {
-        $alt = get_post_meta($id, '_wp_attachment_image_alt', true);
-        $title = get_the_title($id);
+    /**
+     * AJAX: Предпросмотр изменений
+     */
+    public function ajax_preview_changes() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
-        // Фильтр по статусу
-        if (!empty($filters['status'])) {
-            if ($filters['status'] === 'no_alt' && !empty($alt)) continue;
-            if ($filters['status'] === 'no_title' && !empty($title)) continue;
-            if ($filters['status'] === 'no_tags' && (!empty($alt) && !empty($title))) continue;
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
         }
         
-        if (empty($alt)) {
-            $without_alt++;
-        }
-        if (empty($title)) {
-            $without_title++;
-        }
+        $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 10;
+        $filter = isset($_POST['filter']) ? sanitize_text_field($_POST['filter']) : 'all';
         
-        // Подсчет изображений для обработки
-        $will_process = false;
-        if (isset($settings['alt_format']) && $settings['alt_format'] !== 'disabled' && (isset($settings['overwrite_alt']) && $settings['overwrite_alt'] == '1' || empty($alt))) {
-            $will_process = true;
-        }
-        if (isset($settings['title_format']) && $settings['title_format'] !== 'disabled' && (isset($settings['overwrite_title']) && $settings['overwrite_title'] == '1' || empty($title))) {
-            $will_process = true;
-        }
-        if ($will_process) {
-            $needs_processing++;
-        }
-    }
-    
-    wp_send_json_success(array(
-        'total' => $total,
-        'without_alt' => $without_alt,
-        'without_title' => $without_title,
-        'needs_processing' => $needs_processing
-    ));
-}
-    
-/**
- * AJAX: Предпросмотр изменений
- */
-public function ajax_preview_changes() {
-    check_ajax_referer('ait_ajax_nonce', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error(array('message' => __('Недостаточно прав', 'auto-image-tags')));
-        return;
-    }
-    
-    $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 10;
-    $filter = isset($_POST['filter']) ? sanitize_text_field($_POST['filter']) : 'all';
-    
-    $args = array(
-        'post_type' => 'attachment',
-        'post_mime_type' => 'image',
-        'post_status' => 'inherit',
-        'posts_per_page' => $limit,
-        'fields' => 'ids'
-    );
-    
-    $query = new WP_Query($args);
-    $images = array();
-    
-    foreach ($query->posts as $attachment_id) {
-        // Текущие значения
-        $current = array(
-            'alt' => get_post_meta($attachment_id, '_wp_attachment_image_alt', true),
-            'title' => get_the_title($attachment_id),
-            'caption' => wp_get_attachment_caption($attachment_id),
-            'description' => get_post_field('post_content', $attachment_id)
+        $args = array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => $limit,
+            'fields' => 'ids'
         );
         
-        // Новые значения (симуляция обработки)
-        $new_values = $this->simulate_processing($attachment_id);
+        $query = new WP_Query($args);
+        $images = array();
         
-        // Получаем миниатюру
-        $thumb = wp_get_attachment_image_src($attachment_id, 'thumbnail');
+        foreach ($query->posts as $attachment_id) {
+            // Текущие значения
+            $current = array(
+                'alt' => get_post_meta($attachment_id, '_wp_attachment_image_alt', true),
+                'title' => get_the_title($attachment_id),
+                'caption' => wp_get_attachment_caption($attachment_id),
+                'description' => get_post_field('post_content', $attachment_id)
+            );
+            
+            // Новые значения (симуляция обработки)
+            $new_values = $this->simulate_processing($attachment_id);
+            
+            // Получаем миниатюру
+            $thumb = wp_get_attachment_image_src($attachment_id, 'thumbnail');
+            
+            $images[] = array(
+                'id' => $attachment_id,
+                'filename' => basename(get_attached_file($attachment_id)),
+                'thumb' => $thumb ? esc_url($thumb[0]) : '',
+                'current' => $current,
+                'new' => $new_values
+            );
+        }
         
-        $images[] = array(
-            'id' => $attachment_id,
-            'filename' => basename(get_attached_file($attachment_id)),
-            'thumb' => $thumb ? $thumb[0] : '',
-            'current' => $current,
-            'new' => $new_values
+        wp_send_json_success(array('images' => $images));
+    }
+    
+    /**
+     * AJAX: Получение опций фильтра
+     */
+    public function ajax_get_filter_options() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        // Получаем посты с прикрепленными изображениями
+        global $wpdb;
+        $posts = $wpdb->get_results($wpdb->prepare("
+            SELECT DISTINCT p.ID, p.post_title 
+            FROM {$wpdb->posts} p 
+            INNER JOIN {$wpdb->posts} a ON a.post_parent = p.ID 
+            WHERE a.post_type = %s
+            AND a.post_mime_type LIKE %s
+            ORDER BY p.post_title
+            LIMIT 500
+        ", 'attachment', 'image%'));
+        
+        wp_send_json_success(array('posts' => $posts));
+    }
+    
+    /**
+     * AJAX: Обработка существующих изображений
+     */
+    public function ajax_process_existing_images() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        $settings = get_option('autoimta_settings', array());
+        $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+        $batch_size = 10;
+        $filters = isset($_POST['filters']) && is_array($_POST['filters']) ? array_map('sanitize_text_field', $_POST['filters']) : array();
+        
+        $args = array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => $batch_size,
+            'offset' => $offset,
+            'fields' => 'ids'
         );
-    }
-    
-    wp_send_json_success(array('images' => $images));
-}
-    
-/**
- * AJAX: Получение опций фильтра
- */
-public function ajax_get_filter_options() {
-    check_ajax_referer('ait_ajax_nonce', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error(array('message' => __('Недостаточно прав', 'auto-image-tags')));
-        return;
-    }
-    
-    // Получаем посты с прикрепленными изображениями
-    global $wpdb;
-    $posts = $wpdb->get_results($wpdb->prepare("
-        SELECT DISTINCT p.ID, p.post_title 
-        FROM {$wpdb->posts} p 
-        INNER JOIN {$wpdb->posts} a ON a.post_parent = p.ID 
-        WHERE a.post_type = %s
-        AND a.post_mime_type LIKE %s
-        ORDER BY p.post_title
-        LIMIT 500
-    ", 'attachment', 'image%'));
-    
-    wp_send_json_success(array('posts' => $posts));
-}
-    
-/**
- * AJAX: Обработка существующих изображений
- */
-public function ajax_process_existing_images() {
-    check_ajax_referer('ait_ajax_nonce', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error(array('message' => __('Недостаточно прав', 'auto-image-tags')));
-        return;
-    }
-    
-    $settings = get_option('ait_settings', array());
-    $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
-    $batch_size = 10;
-    $filters = isset($_POST['filters']) && is_array($_POST['filters']) ? array_map('sanitize_text_field', $_POST['filters']) : array();
-    
-    $args = array(
-        'post_type' => 'attachment',
-        'post_mime_type' => 'image',
-        'post_status' => 'inherit',
-        'posts_per_page' => $batch_size,
-        'offset' => $offset,
-        'fields' => 'ids'
-    );
-    
-    // Применяем фильтры
-    if (!empty($filters['date']) && $filters['date'] !== 'all') {
-        $date_query = array();
-        switch ($filters['date']) {
-            case 'today':
-                $date_query = array('after' => 'today', 'inclusive' => true);
-                break;
-            case 'week':
-                $date_query = array('after' => '1 week ago', 'inclusive' => true);
-                break;
-            case 'month':
-                $date_query = array('after' => '1 month ago', 'inclusive' => true);
-                break;
-            case 'year':
-                $date_query = array('after' => '1 year ago', 'inclusive' => true);
-                break;
+        
+        // Применяем фильтры
+        if (!empty($filters['date']) && $filters['date'] !== 'all') {
+            $date_query = array();
+            switch ($filters['date']) {
+                case 'today':
+                    $date_query = array('after' => 'today', 'inclusive' => true);
+                    break;
+                case 'week':
+                    $date_query = array('after' => '1 week ago', 'inclusive' => true);
+                    break;
+                case 'month':
+                    $date_query = array('after' => '1 month ago', 'inclusive' => true);
+                    break;
+                case 'year':
+                    $date_query = array('after' => '1 year ago', 'inclusive' => true);
+                    break;
+            }
+            if (!empty($date_query)) {
+                $args['date_query'] = array($date_query);
+            }
         }
-        if (!empty($date_query)) {
-            $args['date_query'] = array($date_query);
+        
+        if (!empty($filters['post']) && $filters['post'] !== 'all') {
+            $args['post_parent'] = intval($filters['post']);
+        }
+        
+        $query = new WP_Query($args);
+        $processed = 0;
+        $success = 0;
+        $errors = 0;
+        $skipped = 0;
+        
+        foreach ($query->posts as $attachment_id) {
+            $result = $this->process_single_image($attachment_id);
+            if ($result === 'success') {
+                $success++;
+            } elseif ($result === 'skipped') {
+                $skipped++;
+            } else {
+                $errors++;
+            }
+            $processed++;
+        }
+        
+        $has_more = ($offset + $batch_size) < $query->found_posts;
+        
+        // Сохраняем в лог, если не тестовый режим и обработка завершена
+        if (!$has_more && isset($settings['test_mode']) && $settings['test_mode'] != '1') {
+            $this->save_process_log($query->found_posts, $processed, $success, $skipped, $errors, isset($settings['test_mode']) && $settings['test_mode'] == '1');
+        }
+        
+        wp_send_json_success(array(
+            'processed' => $processed,
+            'success' => $success,
+            'errors' => $errors,
+            'skipped' => $skipped,
+            'has_more' => $has_more,
+            'test_mode' => isset($settings['test_mode']) && $settings['test_mode'] == '1'
+        ));
+    }
+    
+    /**
+     * AJAX: Получение статистики для удаления
+     */
+    public function ajax_get_remove_stats() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        $date_filter = isset($_POST['date_filter']) ? sanitize_text_field($_POST['date_filter']) : 'all';
+        
+        $args = array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => -1,
+            'fields' => 'ids'
+        );
+        
+        if ($date_filter !== 'all') {
+            $date_query = array();
+            switch ($date_filter) {
+                case 'today':
+                    $date_query = array('after' => 'today', 'inclusive' => true);
+                    break;
+                case 'week':
+                    $date_query = array('after' => '1 week ago', 'inclusive' => true);
+                    break;
+                case 'month':
+                    $date_query = array('after' => '1 month ago', 'inclusive' => true);
+                    break;
+                case 'year':
+                    $date_query = array('after' => '1 year ago', 'inclusive' => true);
+                    break;
+            }
+            if (!empty($date_query)) {
+                $args['date_query'] = array($date_query);
+            }
+        }
+        
+        $query = new WP_Query($args);
+        
+        wp_send_json_success(array(
+            'total' => $query->found_posts
+        ));
+    }
+    
+    /**
+     * AJAX: Удаление тегов
+     */
+    public function ajax_remove_tags() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+        $remove_types = isset($_POST['remove_types']) ? array_map('sanitize_text_field', $_POST['remove_types']) : array();
+        $date_filter = isset($_POST['date_filter']) ? sanitize_text_field($_POST['date_filter']) : 'all';
+        $batch_size = 20;
+        
+        $args = array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => $batch_size,
+            'offset' => $offset,
+            'fields' => 'ids'
+        );
+        
+        if ($date_filter !== 'all') {
+            $date_query = array();
+            switch ($date_filter) {
+                case 'today':
+                    $date_query = array('after' => 'today', 'inclusive' => true);
+                    break;
+                case 'week':
+                    $date_query = array('after' => '1 week ago', 'inclusive' => true);
+                    break;
+                case 'month':
+                    $date_query = array('after' => '1 month ago', 'inclusive' => true);
+                    break;
+                case 'year':
+                    $date_query = array('after' => '1 year ago', 'inclusive' => true);
+                    break;
+            }
+            if (!empty($date_query)) {
+                $args['date_query'] = array($date_query);
+            }
+        }
+        
+        $query = new WP_Query($args);
+        $processed = 0;
+        
+        foreach ($query->posts as $attachment_id) {
+            if (in_array('alt', $remove_types)) {
+                delete_post_meta($attachment_id, '_wp_attachment_image_alt');
+            }
+            
+            $update_data = array('ID' => $attachment_id);
+            $need_update = false;
+            
+            if (in_array('title', $remove_types)) {
+                $update_data['post_title'] = '';
+                $need_update = true;
+            }
+            
+            if (in_array('caption', $remove_types)) {
+                $update_data['post_excerpt'] = '';
+                $need_update = true;
+            }
+            
+            if (in_array('description', $remove_types)) {
+                $update_data['post_content'] = '';
+                $need_update = true;
+            }
+            
+            if ($need_update) {
+                wp_update_post($update_data);
+            }
+            
+            $processed++;
+        }
+        
+        $has_more = ($offset + $batch_size) < $query->found_posts;
+        
+        wp_send_json_success(array(
+            'processed' => $processed,
+            'has_more' => $has_more,
+            'total_processed' => $offset + $processed
+        ));
+    }
+    
+    /**
+     * AJAX: Экспорт настроек
+     */
+    public function ajax_export_settings() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        $settings = get_option('autoimta_settings', array());
+        
+        wp_send_json_success(array(
+            'settings' => $settings
+        ));
+    }
+    
+    /**
+     * AJAX: Импорт настроек
+     */
+    public function ajax_import_settings() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        $settings = isset($_POST['settings']) ? $_POST['settings'] : array();
+        
+        if (empty($settings)) {
+            wp_send_json_error(array('message' => __('Settings are empty', 'auto-image-tags')));
+            return;
+        }
+        
+        // Санитизация импортированных настроек
+        $sanitized = $this->sanitize_settings($settings);
+        
+        update_option('autoimta_settings', $sanitized);
+        
+        wp_send_json_success(array(
+            'message' => __('Settings successfully imported', 'auto-image-tags')
+        ));
+    }
+    
+    /**
+     * AJAX: Тестовый перевод
+     */
+    public function ajax_test_translation() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        $text = isset($_POST['text']) ? sanitize_text_field($_POST['text']) : '';
+        
+        if (empty($text)) {
+            wp_send_json_error(array('message' => __('Text to translate is empty', 'auto-image-tags')));
+            return;
+        }
+        
+        $settings = get_option('autoimta_settings', array());
+        $translation = $this->translate_text($text, $settings);
+        
+        if (is_wp_error($translation)) {
+            wp_send_json_error(array('message' => $translation->get_error_message()));
+            return;
+        }
+        
+        wp_send_json_success(array(
+            'translation' => $translation,
+            'service' => $settings['translation_service']
+        ));
+    }
+
+    /**
+     * AJAX: Получение статистики для перевода
+     */
+    public function ajax_get_translation_stats() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        $settings = get_option('autoimta_settings', array());
+        
+        // Считаем изображения с тегами для перевода
+        $args = array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => -1,
+            'fields' => 'ids'
+        );
+        
+        $query = new WP_Query($args);
+        $total = 0;
+        
+        foreach ($query->posts as $attachment_id) {
+            $has_tags = false;
+            
+            if ($settings['translate_alt'] == '1') {
+                $alt = get_post_meta($attachment_id, '_wp_attachment_image_alt', true);
+                if (!empty($alt)) $has_tags = true;
+            }
+            
+            if ($settings['translate_title'] == '1') {
+                $title = get_the_title($attachment_id);
+                if (!empty($title)) $has_tags = true;
+            }
+            
+            if ($settings['translate_caption'] == '1') {
+                $caption = wp_get_attachment_caption($attachment_id);
+                if (!empty($caption)) $has_tags = true;
+            }
+            
+            if ($settings['translate_description'] == '1') {
+                $description = get_post_field('post_content', $attachment_id);
+                if (!empty($description)) $has_tags = true;
+            }
+            
+            if ($has_tags) {
+                $total++;
+            }
+        }
+        
+        wp_send_json_success(array('total' => $total));
+    }
+
+    /**
+     * AJAX: Массовый перевод (батч)
+     */
+    public function ajax_translate_batch() {
+        check_ajax_referer('autoimta_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            return;
+        }
+        
+        $settings = get_option('autoimta_settings', array());
+        $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+        $batch_size = 5; // Небольшие батчи для API лимитов
+        
+        $args = array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => $batch_size,
+            'offset' => $offset,
+            'fields' => 'ids'
+        );
+        
+        $query = new WP_Query($args);
+        $processed = 0;
+        $success = 0;
+        $errors = 0;
+        
+        foreach ($query->posts as $attachment_id) {
+            $result = $this->translate_image_tags($attachment_id, $settings);
+            
+            if ($result['success']) {
+                $success++;
+            } else {
+                $errors++;
+            }
+            
+            $processed++;
+        }
+        
+        $has_more = ($offset + $batch_size) < $query->found_posts;
+        
+        wp_send_json_success(array(
+            'processed' => $processed,
+            'success' => $success,
+            'errors' => $errors,
+            'has_more' => $has_more
+        ));
+    }
+	
+	/**
+     * Сохранение лога обработки
+     */
+    private function save_process_log($total, $processed, $success, $skipped, $errors, $test_mode) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'autoimta_process_log';
+        
+        $result = $wpdb->insert(
+            $table_name,
+            array(
+                'total_images' => absint($total),
+                'processed' => absint($processed),
+                'success' => absint($success),
+                'skipped' => absint($skipped),
+                'errors' => absint($errors),
+                'test_mode' => $test_mode ? 1 : 0
+            ),
+            array('%d', '%d', '%d', '%d', '%d', '%d')
+        );
+        
+        if ($result === false) {
+            error_log('AUTOIMTA Plugin: Failed to save log - ' . $wpdb->last_error);
         }
     }
-    
-    if (!empty($filters['post']) && $filters['post'] !== 'all') {
-        $args['post_parent'] = intval($filters['post']);
-    }
-    
-    $query = new WP_Query($args);
-    $processed = 0;
-    $success = 0;
-    $errors = 0;
-    $skipped = 0;
-    
-    foreach ($query->posts as $attachment_id) {
-        $result = $this->process_single_image($attachment_id);
-        if ($result === 'success') {
-            $success++;
-        } elseif ($result === 'skipped') {
-            $skipped++;
-        } else {
-            $errors++;
-        }
-        $processed++;
-    }
-    
-    $has_more = ($offset + $batch_size) < $query->found_posts;
-    
-    // Сохраняем в лог, если не тестовый режим и обработка завершена
-    if (!$has_more && isset($settings['test_mode']) && $settings['test_mode'] != '1') {
-        $this->save_process_log($query->found_posts, $processed, $success, $skipped, $errors, isset($settings['test_mode']) && $settings['test_mode'] == '1');
-    }
-    
-    wp_send_json_success(array(
-        'processed' => $processed,
-        'success' => $success,
-        'errors' => $errors,
-        'skipped' => $skipped,
-        'has_more' => $has_more,
-        'test_mode' => isset($settings['test_mode']) && $settings['test_mode'] == '1'
-    ));
-}
-    
-/**
- * Сохранение лога обработки
- */
-private function save_process_log($total, $processed, $success, $skipped, $errors, $test_mode) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'ait_process_log';
-    
-    $result = $wpdb->insert(
-        $table_name,
-        array(
-            'total_images' => absint($total),
-            'processed' => absint($processed),
-            'success' => absint($success),
-            'skipped' => absint($skipped),
-            'errors' => absint($errors),
-            'test_mode' => $test_mode ? 1 : 0
-        ),
-        array('%d', '%d', '%d', '%d', '%d', '%d')
-    );
-    
-    if ($result === false) {
-        error_log('AIT Plugin: Failed to save log - ' . $wpdb->last_error);
-    }
-}
     
     /**
      * Обработка загрузки изображения
      */
     public function handle_image_upload($attachment_id) {
-        $settings = get_option('ait_settings');
+        $settings = get_option('autoimta_settings');
         
-        if ($settings['process_on_upload'] != '1') {
+        if (!isset($settings['process_on_upload']) || $settings['process_on_upload'] != '1') {
             return;
         }
         
@@ -1372,7 +2185,7 @@ private function save_process_log($total, $processed, $success, $skipped, $error
      * Симуляция обработки (для предпросмотра)
      */
     private function simulate_processing($attachment_id) {
-        $settings = get_option('ait_settings');
+        $settings = get_option('autoimta_settings');
         
         // Получаем данные
         $filename = pathinfo(get_attached_file($attachment_id), PATHINFO_FILENAME);
@@ -1391,19 +2204,19 @@ private function save_process_log($total, $processed, $success, $skipped, $error
         );
         
         // Генерируем новые значения
-        if ($settings['alt_format'] !== 'disabled') {
+        if (isset($settings['alt_format']) && $settings['alt_format'] !== 'disabled') {
             $new_values['alt'] = $this->generate_tag_text($settings['alt_format'], $settings['alt_custom_text'], $filename, $post_title, $site_name, $post_id);
         }
         
-        if ($settings['title_format'] !== 'disabled') {
+        if (isset($settings['title_format']) && $settings['title_format'] !== 'disabled') {
             $new_values['title'] = $this->generate_tag_text($settings['title_format'], $settings['title_custom_text'], $filename, $post_title, $site_name, $post_id);
         }
         
-        if ($settings['caption_format'] !== 'disabled') {
+        if (isset($settings['caption_format']) && $settings['caption_format'] !== 'disabled') {
             $new_values['caption'] = $this->generate_tag_text($settings['caption_format'], $settings['caption_custom_text'], $filename, $post_title, $site_name, $post_id);
         }
         
-        if ($settings['description_format'] !== 'disabled') {
+        if (isset($settings['description_format']) && $settings['description_format'] !== 'disabled') {
             $new_values['description'] = $this->generate_tag_text($settings['description_format'], $settings['description_custom_text'], $filename, $post_title, $site_name, $post_id);
         }
         
@@ -1414,10 +2227,10 @@ private function save_process_log($total, $processed, $success, $skipped, $error
      * Обработка одного изображения
      */
     private function process_single_image($attachment_id) {
-        $settings = get_option('ait_settings');
+        $settings = get_option('autoimta_settings');
         
         // В тестовом режиме ничего не сохраняем
-        if ($settings['test_mode'] == '1') {
+        if (isset($settings['test_mode']) && $settings['test_mode'] == '1') {
             return 'success';
         }
         
@@ -1439,11 +2252,11 @@ private function save_process_log($total, $processed, $success, $skipped, $error
         $updated = false;
         
         // ALT
-        if ($settings['alt_format'] !== 'disabled') {
-            if ($settings['overwrite_alt'] == '1' || empty($current_alt)) {
+        if (isset($settings['alt_format']) && $settings['alt_format'] !== 'disabled') {
+            if ((isset($settings['overwrite_alt']) && $settings['overwrite_alt'] == '1') || empty($current_alt)) {
                 $alt_text = $this->generate_tag_text($settings['alt_format'], $settings['alt_custom_text'], $filename, $post_title, $site_name, $post_id);
                 if (!empty($alt_text)) {
-                    update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt_text);
+                    update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field($alt_text));
                     $updated = true;
                 }
             }
@@ -1454,12 +2267,12 @@ private function save_process_log($total, $processed, $success, $skipped, $error
         $need_update = false;
         
         // Title
-        if ($settings['title_format'] !== 'disabled') {
-            if ($settings['overwrite_title'] == '1' || empty($current_title)) {
+        if (isset($settings['title_format']) && $settings['title_format'] !== 'disabled') {
+            if ((isset($settings['overwrite_title']) && $settings['overwrite_title'] == '1') || empty($current_title)) {
                 $title_text = $this->generate_tag_text($settings['title_format'], $settings['title_custom_text'], $filename, $post_title, $site_name, $post_id);
                 if (!empty($title_text)) {
                     $attachment_data['ID'] = $attachment_id;
-                    $attachment_data['post_title'] = $title_text;
+                    $attachment_data['post_title'] = sanitize_text_field($title_text);
                     $need_update = true;
                     $updated = true;
                 }
@@ -1467,14 +2280,14 @@ private function save_process_log($total, $processed, $success, $skipped, $error
         }
         
         // Caption
-        if ($settings['caption_format'] !== 'disabled') {
-            if ($settings['overwrite_caption'] == '1' || empty($current_caption)) {
+        if (isset($settings['caption_format']) && $settings['caption_format'] !== 'disabled') {
+            if ((isset($settings['overwrite_caption']) && $settings['overwrite_caption'] == '1') || empty($current_caption)) {
                 $caption_text = $this->generate_tag_text($settings['caption_format'], $settings['caption_custom_text'], $filename, $post_title, $site_name, $post_id);
                 if (!empty($caption_text)) {
                     if (!isset($attachment_data['ID'])) {
                         $attachment_data['ID'] = $attachment_id;
                     }
-                    $attachment_data['post_excerpt'] = $caption_text;
+                    $attachment_data['post_excerpt'] = sanitize_text_field($caption_text);
                     $need_update = true;
                     $updated = true;
                 }
@@ -1482,14 +2295,14 @@ private function save_process_log($total, $processed, $success, $skipped, $error
         }
         
         // Description
-        if ($settings['description_format'] !== 'disabled') {
-            if ($settings['overwrite_description'] == '1' || empty($current_description)) {
+        if (isset($settings['description_format']) && $settings['description_format'] !== 'disabled') {
+            if ((isset($settings['overwrite_description']) && $settings['overwrite_description'] == '1') || empty($current_description)) {
                 $description_text = $this->generate_tag_text($settings['description_format'], $settings['description_custom_text'], $filename, $post_title, $site_name, $post_id);
                 if (!empty($description_text)) {
                     if (!isset($attachment_data['ID'])) {
                         $attachment_data['ID'] = $attachment_id;
                     }
-                    $attachment_data['post_content'] = $description_text;
+                    $attachment_data['post_content'] = sanitize_textarea_field($description_text);
                     $need_update = true;
                     $updated = true;
                 }
@@ -1504,64 +2317,64 @@ private function save_process_log($total, $processed, $success, $skipped, $error
         return $updated ? 'success' : 'skipped';
     }
     
-/**
- * Очистка имени файла
- */
-private function clean_filename($filename, $settings) {
-    // Удаление номеров камер (DSC_0001, IMG_20231225, etc.)
-    if (isset($settings['remove_numbers']) && $settings['remove_numbers'] == '1') {
-        $filename = preg_replace('/^(DSC|IMG|DCIM|PHOTO|PIC)[-_]?\d+/i', '', $filename);
-        $filename = preg_replace('/^\d{8}[-_]\d{6}/', '', $filename);
-    }
-    
-    // Удаление суффиксов размеров
-    if (isset($settings['remove_size_suffix']) && $settings['remove_size_suffix'] == '1') {
-        $filename = preg_replace('/-\d+x\d+$/', '', $filename);
-        $filename = preg_replace('/-(scaled|thumb|thumbnail|medium|large)$/', '', $filename);
-    }
-    
-    // Обработка CamelCase
-    if (isset($settings['camelcase_split']) && $settings['camelcase_split'] == '1') {
-        $filename = preg_replace('/([a-z])([A-Z])/', '$1 $2', $filename);
-    }
-    
-    // Замена дефисов и подчеркиваний
-    if (isset($settings['remove_hyphens']) && $settings['remove_hyphens'] == '1') {
-        $filename = str_replace(array('-', '_'), ' ', $filename);
-    }
-    
-    // Удаление точек
-    if (isset($settings['remove_dots']) && $settings['remove_dots'] == '1') {
-        $filename = str_replace('.', ' ', $filename);
-    }
-    
-    // Удаление стоп-слов
-    $stop_words = array_merge(
-        array_map('trim', explode(',', isset($settings['stop_words']) ? $settings['stop_words'] : '')),
-        array_map('trim', explode(',', isset($settings['custom_stop_words']) ? $settings['custom_stop_words'] : ''))
-    );
-    
-    foreach ($stop_words as $word) {
-        $word = trim($word);
-        if (!empty($word)) {
-            $pattern = '/\b' . preg_quote($word, '/') . '\b/i';
-            if (@preg_match($pattern, '') !== false) {
-                $filename = preg_replace($pattern, '', $filename);
+    /**
+     * Очистка имени файла
+     */
+    private function clean_filename($filename, $settings) {
+        // Удаление номеров камер (DSC_0001, IMG_20231225, etc.)
+        if (isset($settings['remove_numbers']) && $settings['remove_numbers'] == '1') {
+            $filename = preg_replace('/^(DSC|IMG|DCIM|PHOTO|PIC)[-_]?\d+/i', '', $filename);
+            $filename = preg_replace('/^\d{8}[-_]\d{6}/', '', $filename);
+        }
+        
+        // Удаление суффиксов размеров
+        if (isset($settings['remove_size_suffix']) && $settings['remove_size_suffix'] == '1') {
+            $filename = preg_replace('/-\d+x\d+$/', '', $filename);
+            $filename = preg_replace('/-(scaled|thumb|thumbnail|medium|large)$/', '', $filename);
+        }
+        
+        // Обработка CamelCase
+        if (isset($settings['camelcase_split']) && $settings['camelcase_split'] == '1') {
+            $filename = preg_replace('/([a-z])([A-Z])/', '$1 $2', $filename);
+        }
+        
+        // Замена дефисов и подчеркиваний
+        if (isset($settings['remove_hyphens']) && $settings['remove_hyphens'] == '1') {
+            $filename = str_replace(array('-', '_'), ' ', $filename);
+        }
+        
+        // Удаление точек
+        if (isset($settings['remove_dots']) && $settings['remove_dots'] == '1') {
+            $filename = str_replace('.', ' ', $filename);
+        }
+        
+        // Удаление стоп-слов
+        $stop_words = array_merge(
+            array_map('trim', explode(',', isset($settings['stop_words']) ? $settings['stop_words'] : '')),
+            array_map('trim', explode(',', isset($settings['custom_stop_words']) ? $settings['custom_stop_words'] : ''))
+        );
+        
+        foreach ($stop_words as $word) {
+            $word = trim($word);
+            if (!empty($word)) {
+                $pattern = '/\b' . preg_quote($word, '/') . '\b/i';
+                if (@preg_match($pattern, '') !== false) {
+                    $filename = preg_replace($pattern, '', $filename);
+                }
             }
         }
+        
+        // Очистка лишних пробелов
+        $filename = preg_replace('/\s+/', ' ', $filename);
+        $filename = trim($filename);
+        
+        // Капитализация
+        if (isset($settings['capitalize_words']) && $settings['capitalize_words'] == '1') {
+            $filename = ucwords(strtolower($filename));
+        }
+        
+        return $filename;
     }
-    
-    // Очистка лишних пробелов
-    $filename = preg_replace('/\s+/', ' ', $filename);
-    $filename = trim($filename);
-    
-    // Капитализация
-    if (isset($settings['capitalize_words']) && $settings['capitalize_words'] == '1') {
-        $filename = ucwords(strtolower($filename));
-    }
-    
-    return $filename;
-}
     
     /**
      * Генерация текста тега
@@ -1630,265 +2443,536 @@ private function clean_filename($filename, $settings) {
     }
     
     /**
+     * Перевод текста через выбранный API
+     */
+    private function translate_text($text, $settings) {
+        if (empty($text)) {
+            return new WP_Error('empty_text', __('Text to translate is empty', 'auto-image-tags'));
+        }
+        
+        $service = isset($settings['translation_service']) ? $settings['translation_service'] : 'google';
+        $source_lang = isset($settings['translation_source_lang']) ? $settings['translation_source_lang'] : 'en';
+        $target_lang = isset($settings['translation_target_lang']) ? $settings['translation_target_lang'] : 'ru';
+        
+        switch ($service) {
+            case 'google':
+                return $this->translate_google($text, $source_lang, $target_lang, $settings);
+            case 'deepl':
+                return $this->translate_deepl($text, $source_lang, $target_lang, $settings);
+            case 'yandex':
+                return $this->translate_yandex($text, $source_lang, $target_lang, $settings);
+            case 'libre':
+                return $this->translate_libre($text, $source_lang, $target_lang, $settings);
+            case 'mymemory':
+                return $this->translate_mymemory($text, $source_lang, $target_lang, $settings);
+            default:
+                return new WP_Error('invalid_service', __('Unknown translation service', 'auto-image-tags'));
+        }
+    }
+
+    /**
+     * Google Translate API
+     */
+    private function translate_google($text, $source_lang, $target_lang, $settings) {
+        $api_key = isset($settings['translation_google_key']) ? $settings['translation_google_key'] : '';
+        
+        if (empty($api_key)) {
+            return new WP_Error('no_api_key', __('Google Translate API key not specified', 'auto-image-tags'));
+        }
+        
+        $url = 'https://translation.googleapis.com/language/translate/v2';
+        
+        $response = wp_remote_post($url, array(
+            'timeout' => 15,
+            'body' => array(
+                'q' => $text,
+                'source' => $source_lang,
+                'target' => $target_lang,
+                'key' => $api_key,
+                'format' => 'text'
+            )
+        ));
+        
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (isset($data['error'])) {
+            return new WP_Error('api_error', $data['error']['message']);
+        }
+        
+        if (isset($data['data']['translations'][0]['translatedText'])) {
+            return sanitize_text_field($data['data']['translations'][0]['translatedText']);
+        }
+        
+        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+    }
+
+    /**
+     * DeepL API
+     */
+    private function translate_deepl($text, $source_lang, $target_lang, $settings) {
+        $api_key = isset($settings['translation_deepl_key']) ? $settings['translation_deepl_key'] : '';
+        
+        if (empty($api_key)) {
+            return new WP_Error('no_api_key', __('DeepL API key not specified', 'auto-image-tags'));
+        }
+        
+        // Определяем URL (бесплатный или платный API)
+        $url = (strpos($api_key, ':fx') !== false) 
+            ? 'https://api-free.deepl.com/v2/translate'
+            : 'https://api.deepl.com/v2/translate';
+        
+        $response = wp_remote_post($url, array(
+            'timeout' => 15,
+            'headers' => array(
+                'Authorization' => 'DeepL-Auth-Key ' . $api_key,
+                'Content-Type' => 'application/x-www-form-urlencoded'
+            ),
+            'body' => array(
+                'text' => $text,
+                'source_lang' => strtoupper($source_lang),
+                'target_lang' => strtoupper($target_lang)
+            )
+        ));
+        
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (isset($data['message'])) {
+            return new WP_Error('api_error', sanitize_text_field($data['message']));
+        }
+        
+        if (isset($data['translations'][0]['text'])) {
+            return sanitize_text_field($data['translations'][0]['text']);
+        }
+        
+        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+    }
+
+    /**
+     * Яндекс.Переводчик API
+     */
+    private function translate_yandex($text, $source_lang, $target_lang, $settings) {
+        $api_key = isset($settings['translation_yandex_key']) ? $settings['translation_yandex_key'] : '';
+        
+        if (empty($api_key)) {
+            return new WP_Error('no_api_key', __('Yandex Translator API key not specified', 'auto-image-tags'));
+        }
+        
+        $url = 'https://translate.api.cloud.yandex.net/translate/v2/translate';
+        
+        $response = wp_remote_post($url, array(
+            'timeout' => 15,
+            'headers' => array(
+                'Authorization' => 'Api-Key ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode(array(
+                'texts' => array($text),
+                'sourceLanguageCode' => $source_lang,
+                'targetLanguageCode' => $target_lang
+            ))
+        ));
+        
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (isset($data['message'])) {
+            return new WP_Error('api_error', sanitize_text_field($data['message']));
+        }
+        
+        if (isset($data['translations'][0]['text'])) {
+            return sanitize_text_field($data['translations'][0]['text']);
+        }
+        
+        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+    }
+
+    /**
+     * LibreTranslate API
+     */
+    private function translate_libre($text, $source_lang, $target_lang, $settings) {
+        $api_url = isset($settings['translation_libre_url']) ? $settings['translation_libre_url'] : 'https://libretranslate.com';
+        $url = trailingslashit($api_url) . 'translate';
+        
+        $response = wp_remote_post($url, array(
+            'timeout' => 15,
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => json_encode(array(
+                'q' => $text,
+                'source' => $source_lang,
+                'target' => $target_lang,
+                'format' => 'text'
+            ))
+        ));
+        
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (isset($data['error'])) {
+            return new WP_Error('api_error', sanitize_text_field($data['error']));
+        }
+        
+        if (isset($data['translatedText'])) {
+            return sanitize_text_field($data['translatedText']);
+        }
+        
+        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+    }
+
+    /**
+     * MyMemory API
+     */
+    private function translate_mymemory($text, $source_lang, $target_lang, $settings) {
+        $email = isset($settings['translation_mymemory_email']) ? $settings['translation_mymemory_email'] : '';
+        
+        $url = 'https://api.mymemory.translated.net/get';
+        $args = array(
+            'q' => $text,
+            'langpair' => $source_lang . '|' . $target_lang
+        );
+        
+        if (!empty($email)) {
+            $args['de'] = $email;
+        }
+        
+        $response = wp_remote_get(add_query_arg($args, $url), array('timeout' => 15));
+        
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (isset($data['responseStatus']) && $data['responseStatus'] != 200) {
+            $error_msg = isset($data['responseDetails']) ? sanitize_text_field($data['responseDetails']) : __('API error', 'auto-image-tags');
+            return new WP_Error('api_error', $error_msg);
+        }
+        
+        if (isset($data['responseData']['translatedText'])) {
+            return sanitize_text_field($data['responseData']['translatedText']);
+        }
+        
+        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+    }
+
+    /**
+     * Перевод тегов изображения
+     */
+    private function translate_image_tags($attachment_id, $settings) {
+        $result = array('success' => false, 'errors' => array());
+        
+        // ALT
+        if (isset($settings['translate_alt']) && $settings['translate_alt'] == '1') {
+            $alt = get_post_meta($attachment_id, '_wp_attachment_image_alt', true);
+            if (!empty($alt)) {
+                $translated = $this->translate_text($alt, $settings);
+                if (!is_wp_error($translated)) {
+                    update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field($translated));
+                    $result['success'] = true;
+                } else {
+                    $result['errors'][] = 'ALT: ' . $translated->get_error_message();
+                }
+            }
+        }
+        
+        // TITLE, CAPTION, DESCRIPTION
+        $attachment_data = array('ID' => $attachment_id);
+        $need_update = false;
+        
+        if (isset($settings['translate_title']) && $settings['translate_title'] == '1') {
+            $title = get_the_title($attachment_id);
+            if (!empty($title)) {
+                $translated = $this->translate_text($title, $settings);
+                if (!is_wp_error($translated)) {
+                    $attachment_data['post_title'] = sanitize_text_field($translated);
+                    $need_update = true;
+                    $result['success'] = true;
+                } else {
+                    $result['errors'][] = 'TITLE: ' . $translated->get_error_message();
+                }
+            }
+        }
+        
+        if (isset($settings['translate_caption']) && $settings['translate_caption'] == '1') {
+            $caption = wp_get_attachment_caption($attachment_id);
+            if (!empty($caption)) {
+                $translated = $this->translate_text($caption, $settings);
+                if (!is_wp_error($translated)) {
+                    $attachment_data['post_excerpt'] = sanitize_text_field($translated);
+                    $need_update = true;
+                    $result['success'] = true;
+                } else {
+                    $result['errors'][] = 'CAPTION: ' . $translated->get_error_message();
+                }
+            }
+        }
+        
+        if (isset($settings['translate_description']) && $settings['translate_description'] == '1') {
+            $description = get_post_field('post_content', $attachment_id);
+            if (!empty($description)) {
+                $translated = $this->translate_text($description, $settings);
+                if (!is_wp_error($translated)) {
+                    $attachment_data['post_content'] = sanitize_textarea_field($translated);
+                    $need_update = true;
+                    $result['success'] = true;
+                } else {
+                    $result['errors'][] = 'DESCRIPTION: ' . $translated->get_error_message();
+                }
+            }
+        }
+        
+        if ($need_update) {
+            wp_update_post($attachment_data);
+        }
+        
+        return $result;
+    }
+
+    /**
+     * Обработка товара WooCommerce
+     */
+    public function handle_woocommerce_product($product_id) {
+        $settings = get_option('autoimta_settings', array());
+        
+        // Проверяем, включена ли интеграция
+        if (!isset($settings['woocommerce_enabled']) || $settings['woocommerce_enabled'] != '1') {
+            return;
+        }
+        
+        // Проверяем, установлен ли WooCommerce
+        if (!class_exists('WooCommerce')) {
+            return;
+        }
+        
+        $product = wc_get_product($product_id);
+        if (!$product) {
+            return;
+        }
+        
+        // Получаем данные товара
+        $product_title = $product->get_name();
+        $product_sku = $product->get_sku();
+        
+        // Получаем категории
+        $category_names = array();
+        if (isset($settings['woocommerce_use_category']) && $settings['woocommerce_use_category'] == '1') {
+            $terms = get_the_terms($product_id, 'product_cat');
+            if ($terms && !is_wp_error($terms)) {
+                foreach ($terms as $term) {
+                    $category_names[] = $term->name;
+                }
+            }
+        }
+        $product_category = !empty($category_names) ? implode(', ', $category_names) : '';
+        
+        // Обрабатываем главное изображение
+        $thumbnail_id = $product->get_image_id();
+        if ($thumbnail_id) {
+            $this->process_woocommerce_image($thumbnail_id, $product_title, $product_category, $product_sku, $settings);
+        }
+        
+        // Обрабатываем галерею
+        if (isset($settings['woocommerce_process_gallery']) && $settings['woocommerce_process_gallery'] == '1') {
+            $gallery_ids = $product->get_gallery_image_ids();
+            if (!empty($gallery_ids)) {
+                foreach ($gallery_ids as $gallery_id) {
+                    $this->process_woocommerce_image($gallery_id, $product_title, $product_category, $product_sku, $settings);
+                }
+            }
+        }
+    }
+
+ /**
+     * Обработка изображения товара WooCommerce
+     */
+    private function process_woocommerce_image($attachment_id, $product_title, $product_category, $product_sku, $settings) {
+        // В тестовом режиме ничего не сохраняем
+        if (isset($settings['test_mode']) && $settings['test_mode'] == '1') {
+            return;
+        }
+        
+        // Получаем текущие значения
+        $current_alt = get_post_meta($attachment_id, '_wp_attachment_image_alt', true);
+        $current_title = get_the_title($attachment_id);
+        
+        // Формируем базовый текст
+        $filename = pathinfo(get_attached_file($attachment_id), PATHINFO_FILENAME);
+        $filename = $this->clean_filename($filename, $settings);
+        
+        // Создаём текст с учётом WooCommerce данных
+        $woo_text = $this->generate_woocommerce_text($filename, $product_title, $product_category, $product_sku, $settings);
+        
+        $updated = false;
+        
+        // ALT
+        if (isset($settings['alt_format']) && $settings['alt_format'] !== 'disabled') {
+            if ((isset($settings['overwrite_alt']) && $settings['overwrite_alt'] == '1') || empty($current_alt)) {
+                if (!empty($woo_text)) {
+                    update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field($woo_text));
+                    $updated = true;
+                }
+            }
+        }
+        
+        // TITLE
+        $attachment_data = array();
+        $need_update = false;
+        
+        if (isset($settings['title_format']) && $settings['title_format'] !== 'disabled') {
+            if ((isset($settings['overwrite_title']) && $settings['overwrite_title'] == '1') || empty($current_title)) {
+                if (!empty($woo_text)) {
+                    $attachment_data['ID'] = $attachment_id;
+                    $attachment_data['post_title'] = sanitize_text_field($woo_text);
+                    $need_update = true;
+                    $updated = true;
+                }
+            }
+        }
+        
+        // Caption
+        if (isset($settings['caption_format']) && $settings['caption_format'] !== 'disabled') {
+            $current_caption = wp_get_attachment_caption($attachment_id);
+            if ((isset($settings['overwrite_caption']) && $settings['overwrite_caption'] == '1') || empty($current_caption)) {
+                if (!isset($attachment_data['ID'])) {
+                    $attachment_data['ID'] = $attachment_id;
+                }
+                $attachment_data['post_excerpt'] = sanitize_text_field($woo_text);
+                $need_update = true;
+                $updated = true;
+            }
+        }
+        
+        // Обновляем если нужно
+        if ($need_update) {
+            wp_update_post($attachment_data);
+        }
+        
+        return $updated;
+    }
+
+    /**
+     * Генерация текста для WooCommerce изображений
+     */
+    private function generate_woocommerce_text($filename, $product_title, $product_category, $product_sku, $settings) {
+        $parts = array();
+        
+        // Название файла (очищенное)
+        if (!empty($filename)) {
+            $parts[] = $filename;
+        }
+        
+        // Название товара
+        if (isset($settings['woocommerce_use_product_title']) && $settings['woocommerce_use_product_title'] == '1' && !empty($product_title)) {
+            $parts[] = $product_title;
+        }
+        
+        // Категория
+        if (isset($settings['woocommerce_use_category']) && $settings['woocommerce_use_category'] == '1' && !empty($product_category)) {
+            $parts[] = $product_category;
+        }
+        
+        // SKU
+        if (isset($settings['woocommerce_use_sku']) && $settings['woocommerce_use_sku'] == '1' && !empty($product_sku)) {
+            $parts[] = 'SKU: ' . $product_sku;
+        }
+        
+        return implode(' - ', array_filter($parts));
+    }
+    
+    /**
      * Подключение стилей и скриптов для админки
      */
     public function enqueue_admin_assets($hook) {
         if (strpos($hook, 'auto-image-tags') === false) {
             return;
         }
-?>
-        <style>
-            /* Основные стили */
-            .ait-settings-form {
-                margin-top: 20px;
-            }
-            
-            .ait-info-box,
-            .ait-process-box,
-            .ait-preview-box,
-            .ait-stats-box,
-            .ait-about-box {
-                background: white;
-                border: 1px solid #ccd0d4;
-                border-radius: 4px;
-                padding: 20px;
-                margin-top: 20px;
-                max-width: 1200px;
-            }
-            
-            /* Табы */
-            .tab-content {
-                margin-top: 20px;
-            }
-            
-            /* Фильтры */
-            .ait-filters,
-            .ait-preview-filters {
-                background: #f8f9fa;
-                border: 1px solid #e2e4e7;
-                border-radius: 4px;
-                padding: 15px;
-                margin: 20px 0;
-            }
-            
-            .filter-group,
-            .filter-row {
-                display: flex;
-                gap: 15px;
-                align-items: center;
-                flex-wrap: wrap;
-            }
-            
-            .filter-group label,
-            .filter-row label {
-                display: flex;
-                align-items: center;
-                gap: 5px;
-            }
-            
-            /* Чекбоксы в строку */
-            .ait-checkbox-inline {
-                margin-left: 15px;
-                display: inline-flex;
-                align-items: center;
-                gap: 5px;
-            }
-            
-            /* Статистика */
-            .ait-stats-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 15px;
-                margin: 20px 0;
-            }
-            
-            .ait-stat-item {
-                background: #f8f9fa;
-                border: 1px solid #e2e4e7;
-                border-radius: 4px;
-                padding: 15px;
-                text-align: center;
-            }
-            
-            .ait-stat-label {
-                display: block;
-                color: #666;
-                font-size: 13px;
-                margin-bottom: 5px;
-            }
-            
-            .ait-stat-value {
-                display: block;
-                font-size: 24px;
-                font-weight: bold;
-                color: #2271b1;
-            }
-            
-            /* Прогресс бар */
-            .progress-bar-wrapper {
-                margin: 20px 0;
-            }
-            
-            .progress-bar {
-                width: 100%;
-                height: 30px;
-                background: #f1f1f1;
-                border-radius: 15px;
-                overflow: hidden;
-                position: relative;
-                box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-            }
-            
-            .progress-bar-fill {
-                height: 100%;
-                background: linear-gradient(90deg, #2271b1, #135e96);
-                border-radius: 15px;
-                transition: width 0.3s ease;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            
-            .progress-text {
-                text-align: center;
-                margin-top: 10px;
-                font-weight: bold;
-                font-size: 16px;
-            }
-            
-            #ait-status-text {
-                text-align: center;
-                margin-top: 10px;
-                color: #666;
-            }
-            
-            .ait-status-details {
-                font-size: 12px;
-                color: #999;
-            }
-            
-            /* Уведомления */
-            .ait-notice {
-                padding: 12px;
-                margin: 15px 0;
-                border-left: 4px solid;
-                background: #fff;
-            }
-            
-            .ait-notice-warning {
-                border-left-color: #ffb900;
-                background: #fff8e5;
-            }
-            
-            .ait-notice-success {
-                border-left-color: #00a32a;
-                background: #edfaef;
-            }
-            
-            .ait-notice-info {
-                border-left-color: #00a0d2;
-                background: #e5f5fa;
-            }
-            
-            /* Кнопки */
-            .button-hero {
-                font-size: 16px !important;
-                line-height: 1.4 !important;
-                padding: 8px 16px !important;
-                height: auto !important;
-            }
-            
-            #ait-process-btn {
-                margin-top: 20px;
-            }
-            
-            /* Результаты */
-            #ait-results {
-                margin-top: 30px;
-            }
-            
-            #ait-results .notice {
-                padding: 15px;
-            }
-            
-            #ait-results ul {
-                margin: 10px 0 0 20px;
-                list-style: disc;
-            }
-            
-            /* Предпросмотр */
-            #preview_results table {
-                margin-top: 20px;
-            }
-            
-            #preview_results .changed {
-                background: #fff3cd;
-                padding: 2px 5px;
-                border-radius: 3px;
-            }
-            
-            /* О плагине */
-            .ait-info-section {
-                margin-bottom: 30px;
-            }
-            
-            .ait-info-section h3 {
-                margin-top: 0;
-                margin-bottom: 15px;
-                color: #23282d;
-                border-bottom: 1px solid #e2e4e7;
-                padding-bottom: 10px;
-            }
-            
-            .ait-info-table {
-                width: 100%;
-                max-width: 500px;
-            }
-            
-            .ait-info-table td {
-                padding: 8px 0;
-            }
-            
-            .ait-info-table td:first-child {
-                width: 150px;
-            }
-            
-            .ait-info-section ul {
-                margin-left: 20px;
-                line-height: 1.8;
-            }
-            
-            /* Важная опция */
-            .ait-important-option {
-                background: #fff8e5;
-                padding: 5px 10px;
-                border-radius: 3px;
-                display: inline-block;
-                margin-top: 5px;
-            }
-            
-            /* Адаптивность */
-            @media screen and (max-width: 782px) {
-                .ait-stats-grid {
-                    grid-template-columns: 1fr;
-                }
-                
-                .filter-group,
-                .filter-row {
-                    flex-direction: column;
-                    align-items: stretch;
-                }
-                
-                .ait-info-box,
-                .ait-process-box,
-                .ait-preview-box,
-                .ait-stats-box,
-                .ait-about-box {
-                    padding: 15px;
-                }
-            }
-</style>
-        <?php
+        
+        // Регистрируем и подключаем CSS
+        wp_enqueue_style(
+            'autoimta-admin-css',
+            AUTOIMTA_PLUGIN_URL . 'assets/css/admin-style.css',
+            array(),
+            AUTOIMTA_VERSION
+        );
+        
+        // Регистрируем и подключаем JS
+        wp_enqueue_script(
+            'autoimta-admin-js',
+            AUTOIMTA_PLUGIN_URL . 'assets/js/admin-main.js',
+            array('jquery'),
+            AUTOIMTA_VERSION,
+            true
+        );
+        
+        // Передаём данные в JS
+        wp_localize_script('autoimta-admin-js', 'autoimtaData', array(
+            'ajaxurl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('autoimta_ajax_nonce'),
+            'strings' => array(
+                'loading' => __('Loading...', 'auto-image-tags'),
+                'processed' => __('Processed:', 'auto-image-tags'),
+                'success' => __('Success:', 'auto-image-tags'),
+                'errors' => __('Errors:', 'auto-image-tags'),
+                'skipped' => __('Skipped:', 'auto-image-tags'),
+                'confirm_process' => __('Are you sure you want to start processing images?', 'auto-image-tags'),
+                'confirm_test' => __('Run test processing? (changes will not be saved)', 'auto-image-tags'),
+                'confirm_remove' => __('Are you sure? This action cannot be undone!', 'auto-image-tags'),
+                'confirm_translate' => __('Start bulk translation of all tags?', 'auto-image-tags'),
+                'empty' => __('empty', 'auto-image-tags'),
+                'no_changes' => __('no changes', 'auto-image-tags'),
+                'all' => __('All', 'auto-image-tags'),
+                'total_images' => __('Total images:', 'auto-image-tags'),
+                'without_alt' => __('Without ALT:', 'auto-image-tags'),
+                'without_title' => __('Without TITLE:', 'auto-image-tags'),
+                'will_be_processed' => __('Will be processed:', 'auto-image-tags'),
+                'no_images' => __('No images to process with selected filters.', 'auto-image-tags'),
+                'completed' => __('Processing completed!', 'auto-image-tags'),
+                'test_mode' => __('TEST MODE', 'auto-image-tags'),
+                'test_run' => __('This was a test run. Changes were not saved.', 'auto-image-tags'),
+                'successfully_processed' => __('Successfully processed:', 'auto-image-tags'),
+                'removal_completed' => __('Removal completed!', 'auto-image-tags'),
+                'images_processed' => __('Images processed:', 'auto-image-tags'),
+                'translation_completed' => __('Translation completed!', 'auto-image-tags'),
+                'successfully_translated' => __('Successfully translated:', 'auto-image-tags'),
+                'removed' => __('Removed:', 'auto-image-tags'),
+                'translated' => __('Translated:', 'auto-image-tags'),
+                'original' => __('Original:', 'auto-image-tags'),
+                'translation' => __('Translation:', 'auto-image-tags'),
+                'settings_imported' => __('Settings successfully imported!', 'auto-image-tags'),
+                'invalid_file' => __('Error: invalid file format', 'auto-image-tags'),
+                'select_at_least_one' => __('Select at least one tag type to remove', 'auto-image-tags'),
+                'enter_text' => __('Enter text to translate', 'auto-image-tags'),
+                'translating' => __('Translating...', 'auto-image-tags'),
+                'test_translation' => __('Test Translation', 'auto-image-tags'),
+                'connection_error' => __('Connection error', 'auto-image-tags'),
+                'found_images_with_tags' => __('Found images with tags:', 'auto-image-tags'),
+                'found_images' => __('Found images:', 'auto-image-tags'),
+                'start_processing' => __('Start Processing', 'auto-image-tags'),
+                'process_again' => __('Process Again', 'auto-image-tags'),
+                'remove_tags' => __('Remove Tags', 'auto-image-tags'),
+                'start_translation' => __('Start Translation', 'auto-image-tags')
+            )
+        ));
     }
 }
 
 // Инициализация плагина
-AutoImageTags::getInstance();
+AUTOIMTA_Plugin::getInstance();
