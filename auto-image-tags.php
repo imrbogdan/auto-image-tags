@@ -1,11 +1,11 @@
 <?php
 /**
  * Plugin Name: Auto Image Tags
- * Plugin URI: https://github.com/imrbogdan/auto-image-tags
- * Description: Automatically add ALT, TITLE, Caption and Description tags to WordPress media library images. Includes WooCommerce integration and translation support.
+ * Plugin URI: https://wordpress.org/plugins/auto-image-tags/
+ * Description: Automatically add ALT, TITLE, Caption and Description tags to WordPress media library images. WooCommerce integration and optional translation support.
  * Version: 2.0.0
- * Author: Shapovalov Bogdan
- * Author URI: https://t.me/shapovalovbogdan
+ * Author: mrbogdan
+ * Author URI: https://profiles.wordpress.org/mrbogdan/
  * License: GPLv3 or later
  * License URI: https://www.gnu.org/licenses/gpl-3.0.html
  * Text Domain: auto-image-tags
@@ -17,19 +17,6 @@
 // Защита от прямого доступа
 if (!defined('ABSPATH')) {
     exit;
-}
-
-// Временная отладка
-if (!function_exists('autoimta_debug_log')) {
-    function autoimta_debug_log($message) {
-        if (WP_DEBUG === true) {
-            if (is_array($message) || is_object($message)) {
-                error_log(print_r($message, true));
-            } else {
-                error_log($message);
-            }
-        }
-    }
 }
 
 // Определение констант плагина
@@ -52,7 +39,13 @@ function autoimta_check_requirements() {
     
     if (!empty($errors)) {
         deactivate_plugins(plugin_basename(__FILE__));
-        wp_die('<h1>Auto Image Tags</h1><p><strong>Activation Error:</strong></p><ul><li>' . implode('</li><li>', $errors) . '</li></ul><p><a href="' . esc_url(admin_url('plugins.php')) . '">Return to Plugins</a></p>');
+        $error_list = '<li>' . implode('</li><li>', array_map('esc_html', $errors)) . '</li>';
+wp_die(
+    '<h1>' . esc_html__('Auto Image Tags', 'auto-image-tags') . '</h1>' .
+    '<p><strong>' . esc_html__('Activation Error:', 'auto-image-tags') . '</strong></p>' .
+    '<ul>' . wp_kses_post($error_list) . '</ul>' .
+    '<p><a href="' . esc_url(admin_url('plugins.php')) . '">' . esc_html__('Return to Plugins', 'auto-image-tags') . '</a></p>'
+);
     }
 }
 register_activation_hook(__FILE__, 'autoimta_check_requirements');
@@ -101,127 +94,83 @@ class AUTOIMTA_Plugin {
 /**
      * Активация плагина
      */
-    public function activate() {
-        autoimta_debug_log('=== AUTOIMTA Plugin Activation Started ===');
-        
-        try {
-            // Установка дефолтных настроек
-            if (!get_option('autoimta_settings')) {
-                autoimta_debug_log('Creating default settings...');
-                $default_settings = array(
-                    'alt_format' => 'filename',
-                    'title_format' => 'filename',
-                    'caption_format' => 'disabled',
-                    'description_format' => 'disabled',
-                    'alt_custom_text' => '',
-                    'title_custom_text' => '',
-                    'caption_custom_text' => '',
-                    'description_custom_text' => '',
-                    'remove_hyphens' => '1',
-                    'remove_dots' => '1',
-                    'capitalize_words' => '1',
-                    'remove_numbers' => '1',
-                    'camelcase_split' => '1',
-                    'remove_size_suffix' => '1',
-                    'process_on_upload' => '1',
-                    'overwrite_alt' => '0',
-                    'overwrite_title' => '0',
-                    'overwrite_caption' => '0',
-                    'overwrite_description' => '0',
-                    'stop_words' => 'DSC, IMG, image, photo, picture, pic, screenshot, foto',
-                    'custom_stop_words' => '',
-                    'test_mode' => '0',
-                    'plugin_language' => 'auto',
-                    'translation_service' => 'google',
-                    'translation_google_key' => '',
-                    'translation_deepl_key' => '',
-                    'translation_yandex_key' => '',
-                    'translation_libre_url' => 'https://libretranslate.com',
-                    'translation_mymemory_email' => '',
-                    'translation_source_lang' => 'en',
-                    'translation_target_lang' => 'ru',
-                    'translation_auto_translate' => '0',
-                    'translate_alt' => '1',
-                    'translate_title' => '1',
-                    'translate_caption' => '0',
-                    'translate_description' => '0',
-                    'woocommerce_enabled' => '1',
-                    'woocommerce_process_gallery' => '1',
-                    'woocommerce_use_product_title' => '1',
-                    'woocommerce_use_category' => '1',
-                    'woocommerce_use_sku' => '0'
-                );
-                $result = update_option('autoimta_settings', $default_settings);
-                if ($result) {
-                    autoimta_debug_log('Default settings created successfully');
-                } else {
-                    autoimta_debug_log('WARNING: Failed to create default settings');
-                }
-            } else {
-                autoimta_debug_log('Settings already exist, skipping...');
-            }
-            
-            // Создание таблицы для логов
-            autoimta_debug_log('Creating log table...');
-            $this->create_log_table();
-            autoimta_debug_log('Log table creation completed');
-            
-            autoimta_debug_log('=== AUTOIMTA Plugin Activation Completed Successfully ===');
-        } catch (Exception $e) {
-            autoimta_debug_log('FATAL ERROR during activation: ' . $e->getMessage());
-            autoimta_debug_log('Stack trace: ' . $e->getTraceAsString());
-        }
+public function activate() {
+    // Установка дефолтных настроек
+    if (!get_option('autoimta_settings')) {
+        $default_settings = array(
+            'alt_format' => 'filename',
+            'title_format' => 'filename',
+            'caption_format' => 'disabled',
+            'description_format' => 'disabled',
+            'alt_custom_text' => '',
+            'title_custom_text' => '',
+            'caption_custom_text' => '',
+            'description_custom_text' => '',
+            'remove_hyphens' => '1',
+            'remove_dots' => '1',
+            'capitalize_words' => '1',
+            'remove_numbers' => '1',
+            'camelcase_split' => '1',
+            'remove_size_suffix' => '1',
+            'process_on_upload' => '1',
+            'overwrite_alt' => '0',
+            'overwrite_title' => '0',
+            'overwrite_caption' => '0',
+            'overwrite_description' => '0',
+            'stop_words' => 'DSC, IMG, image, photo, picture, pic, screenshot, foto',
+            'custom_stop_words' => '',
+            'test_mode' => '0',
+            'plugin_language' => 'auto',
+            'translation_service' => 'google',
+            'translation_google_key' => '',
+            'translation_deepl_key' => '',
+            'translation_yandex_key' => '',
+            'translation_libre_url' => 'https://libretranslate.com',
+            'translation_mymemory_email' => '',
+            'translation_source_lang' => 'en',
+            'translation_target_lang' => 'ru',
+            'translation_auto_translate' => '0',
+            'translate_alt' => '1',
+            'translate_title' => '1',
+            'translate_caption' => '0',
+            'translate_description' => '0',
+            'woocommerce_enabled' => '1',
+            'woocommerce_process_gallery' => '1',
+            'woocommerce_use_product_title' => '1',
+            'woocommerce_use_category' => '1',
+            'woocommerce_use_sku' => '0'
+        );
+        update_option('autoimta_settings', $default_settings);
     }
     
+    // Создание таблицы для логов
+    $this->create_log_table();
+}
+
     /**
      * Создание таблицы для логов обработки
      */
-    private function create_log_table() {
-        global $wpdb;
-        
-        try {
-            $table_name = $wpdb->prefix . 'autoimta_process_log';
-            $charset_collate = $wpdb->get_charset_collate();
-            
-            autoimta_debug_log('Table name: ' . $table_name);
-            autoimta_debug_log('Charset collate: ' . $charset_collate);
-            
-            $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-                id int(11) NOT NULL AUTO_INCREMENT,
-                process_date datetime DEFAULT CURRENT_TIMESTAMP,
-                total_images int(11) DEFAULT 0,
-                processed int(11) DEFAULT 0,
-                success int(11) DEFAULT 0,
-                skipped int(11) DEFAULT 0,
-                errors int(11) DEFAULT 0,
-                test_mode tinyint(1) DEFAULT 0,
-                PRIMARY KEY (id)
-            ) $charset_collate;";
-            
-            autoimta_debug_log('SQL query prepared');
-            
-            require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-            autoimta_debug_log('dbDelta function loaded');
-            
-            $result = dbDelta($sql);
-            autoimta_debug_log('dbDelta result: ' . print_r($result, true));
-            
-            // Проверка создания таблицы
-            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name));
-            if ($table_exists) {
-                autoimta_debug_log('Table created successfully: ' . $table_name);
-            } else {
-                autoimta_debug_log('WARNING: Table may not have been created: ' . $table_name);
-            }
-            
-            if ($wpdb->last_error) {
-                autoimta_debug_log('Database error: ' . $wpdb->last_error);
-            }
-        } catch (Exception $e) {
-            autoimta_debug_log('ERROR in create_log_table: ' . $e->getMessage());
-        }
-    }
+  private function create_log_table() {
+    global $wpdb;
     
+    $table_name = $wpdb->prefix . 'autoimta_process_log';
+    $charset_collate = $wpdb->get_charset_collate();
+    
+    $sql = "CREATE TABLE IF NOT EXISTS {$table_name} (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        process_date datetime DEFAULT CURRENT_TIMESTAMP,
+        total_images int(11) DEFAULT 0,
+        processed int(11) DEFAULT 0,
+        success int(11) DEFAULT 0,
+        skipped int(11) DEFAULT 0,
+        errors int(11) DEFAULT 0,
+        test_mode tinyint(1) DEFAULT 0,
+        PRIMARY KEY (id)
+    ) {$charset_collate};";
+    
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta($sql);
+}    
     /**
      * Деактивация плагина
      */
@@ -238,7 +187,7 @@ class AUTOIMTA_Plugin {
         
         if ($language !== 'auto' && !empty($language)) {
             add_filter('determine_locale', function($locale) use ($language) {
-                if (isset($_GET['page']) && strpos($_GET['page'], 'auto-image-tags') !== false) {
+                if (isset($_GET['page']) && strpos(sanitize_text_field(wp_unslash($_GET['page'])), 'auto-image-tags') !== false) {
                     return $language;
                 }
                 return $locale;
@@ -251,8 +200,8 @@ class AUTOIMTA_Plugin {
      */
     public function add_admin_menu() {
         add_menu_page(
-            __('Auto Image Tags', 'auto-image-tags'),
-            __('Auto Image Tags', 'auto-image-tags'),
+            esc_html__('Auto Image Tags', 'auto-image-tags'),
+            esc_html__('Auto Image Tags', 'auto-image-tags'),
             'manage_options',
             'auto-image-tags',
             array($this, 'admin_page'),
@@ -387,7 +336,7 @@ public function admin_page() {
         update_option('autoimta_settings', $settings);
     }
     
-    $active_tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'settings';
+    $active_tab = isset($_GET['tab']) ? sanitize_text_field(wp_unslash($_GET['tab'])) : 'settings';
         ?>
         <div class="wrap">
             <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
@@ -983,11 +932,11 @@ private function render_settings_tab($settings) {
         $table_name = $wpdb->prefix . 'autoimta_process_log';
         
         // Получаем последние записи из лога
-        $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_name ORDER BY process_date DESC LIMIT %d", 20));
+        $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$wpdb->prefix}autoimta_process_log ORDER BY process_date DESC LIMIT %d", 20));
         
         // Общая статистика
-        $total_processed = $wpdb->get_var("SELECT SUM(processed) FROM $table_name");
-        $total_success = $wpdb->get_var("SELECT SUM(success) FROM $table_name");
+        $total_processed = $wpdb->get_var($wpdb->prepare("SELECT SUM(processed) FROM {$wpdb->prefix}autoimta_process_log WHERE 1=%d", 1));
+        $total_success = $wpdb->get_var($wpdb->prepare("SELECT SUM(success) FROM {$wpdb->prefix}autoimta_process_log WHERE 1=%d", 1));
         ?>
         <div class="autoimta-stats-box">
             <h2><?php esc_html_e('Processing Statistics', 'auto-image-tags'); ?></h2>
@@ -1029,7 +978,7 @@ private function render_settings_tab($settings) {
                         <td><?php echo absint($log->success); ?></td>
                         <td><?php echo absint($log->skipped); ?></td>
                         <td><?php echo absint($log->errors); ?></td>
-                        <td><?php echo esc_html($log->test_mode ? __('Test', 'auto-image-tags') : __('Normal', 'auto-image-tags')); ?></td>
+                        <td><?php echo esc_html($log->test_mode ? esc_html__('Test', 'auto-image-tags') : esc_html__('Normal', 'auto-image-tags')); ?></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -1557,12 +1506,12 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
         $settings = get_option('autoimta_settings', array());
-        $filters = isset($_POST['filters']) && is_array($_POST['filters']) ? array_map('sanitize_text_field', $_POST['filters']) : array();
+        $filters = isset($_POST['filters']) && is_array($_POST['filters']) ? array_map('sanitize_text_field', wp_unslash($_POST['filters'])) : array();
         
         // Базовые аргументы запроса
         $args = array(
@@ -1605,7 +1554,7 @@ private function render_settings_tab($settings) {
         
         if ($total > 5000) {
             wp_send_json_error(array(
-                'message' => __('Too many images to count. Use filters.', 'auto-image-tags')
+                'message' => esc_html__('Too many images to count. Use filters.', 'auto-image-tags')
             ));
             return;
         }
@@ -1660,12 +1609,12 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
         $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 10;
-        $filter = isset($_POST['filter']) ? sanitize_text_field($_POST['filter']) : 'all';
+        $filter = isset($_POST['filter']) ? sanitize_text_field(wp_unslash($_POST['filter'])) : 'all';
         
         $args = array(
             'post_type' => 'attachment',
@@ -1712,7 +1661,7 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
@@ -1738,14 +1687,14 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
         $settings = get_option('autoimta_settings', array());
         $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
         $batch_size = 10;
-        $filters = isset($_POST['filters']) && is_array($_POST['filters']) ? array_map('sanitize_text_field', $_POST['filters']) : array();
+        $filters = isset($_POST['filters']) && is_array($_POST['filters']) ? array_map('sanitize_text_field', wp_unslash($_POST['filters'])) : array();
         
         $args = array(
             'post_type' => 'attachment',
@@ -1824,11 +1773,11 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
-        $date_filter = isset($_POST['date_filter']) ? sanitize_text_field($_POST['date_filter']) : 'all';
+        $date_filter = isset($_POST['date_filter']) ? sanitize_text_field(wp_unslash($_POST['date_filter'])) : 'all';
         
         $args = array(
             'post_type' => 'attachment',
@@ -1873,13 +1822,13 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
         $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
-        $remove_types = isset($_POST['remove_types']) ? array_map('sanitize_text_field', $_POST['remove_types']) : array();
-        $date_filter = isset($_POST['date_filter']) ? sanitize_text_field($_POST['date_filter']) : 'all';
+        $remove_types = isset($_POST['remove_types']) ? array_map('sanitize_text_field', wp_unslash($_POST['remove_types'])) : array();
+        $date_filter = isset($_POST['date_filter']) ? sanitize_text_field(wp_unslash($_POST['date_filter'])) : 'all';
         $batch_size = 20;
         
         $args = array(
@@ -1961,7 +1910,7 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
@@ -1979,14 +1928,14 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
-        $settings = isset($_POST['settings']) ? $_POST['settings'] : array();
+        $settings = isset($_POST['settings']) ? json_decode(wp_unslash($_POST['settings']), true) : array();
         
         if (empty($settings)) {
-            wp_send_json_error(array('message' => __('Settings are empty', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Settings are empty', 'auto-image-tags')));
             return;
         }
         
@@ -1996,7 +1945,7 @@ private function render_settings_tab($settings) {
         update_option('autoimta_settings', $sanitized);
         
         wp_send_json_success(array(
-            'message' => __('Settings successfully imported', 'auto-image-tags')
+            'message' => esc_html__('Settings successfully imported', 'auto-image-tags')
         ));
     }
     
@@ -2007,14 +1956,14 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
-        $text = isset($_POST['text']) ? sanitize_text_field($_POST['text']) : '';
+        $text = isset($_POST['text']) ? sanitize_text_field(wp_unslash($_POST['text'])) : '';
         
         if (empty($text)) {
-            wp_send_json_error(array('message' => __('Text to translate is empty', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Text to translate is empty', 'auto-image-tags')));
             return;
         }
         
@@ -2039,7 +1988,7 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
@@ -2095,7 +2044,7 @@ private function render_settings_tab($settings) {
         check_ajax_referer('autoimta_ajax_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Insufficient permissions', 'auto-image-tags')));
+            wp_send_json_error(array('message' => esc_html__('Insufficient permissions', 'auto-image-tags')));
             return;
         }
         
@@ -2147,21 +2096,19 @@ private function render_settings_tab($settings) {
         $table_name = $wpdb->prefix . 'autoimta_process_log';
         
         $result = $wpdb->insert(
-            $table_name,
-            array(
-                'total_images' => absint($total),
-                'processed' => absint($processed),
-                'success' => absint($success),
-                'skipped' => absint($skipped),
-                'errors' => absint($errors),
-                'test_mode' => $test_mode ? 1 : 0
-            ),
-            array('%d', '%d', '%d', '%d', '%d', '%d')
-        );
+    $wpdb->prefix . 'autoimta_process_log',
+    array(
+        'total_images' => absint($total),
+        'processed' => absint($processed),
+        'success' => absint($success),
+        'skipped' => absint($skipped),
+        'errors' => absint($errors),
+        'test_mode' => $test_mode ? 1 : 0
+    ),
+    array('%d', '%d', '%d', '%d', '%d', '%d')
+);
         
-        if ($result === false) {
-            error_log('AUTOIMTA Plugin: Failed to save log - ' . $wpdb->last_error);
-        }
+        
     }
     
     /**
@@ -2320,61 +2267,59 @@ private function render_settings_tab($settings) {
     /**
      * Очистка имени файла
      */
-    private function clean_filename($filename, $settings) {
-        // Удаление номеров камер (DSC_0001, IMG_20231225, etc.)
-        if (isset($settings['remove_numbers']) && $settings['remove_numbers'] == '1') {
-            $filename = preg_replace('/^(DSC|IMG|DCIM|PHOTO|PIC)[-_]?\d+/i', '', $filename);
-            $filename = preg_replace('/^\d{8}[-_]\d{6}/', '', $filename);
-        }
-        
-        // Удаление суффиксов размеров
-        if (isset($settings['remove_size_suffix']) && $settings['remove_size_suffix'] == '1') {
-            $filename = preg_replace('/-\d+x\d+$/', '', $filename);
-            $filename = preg_replace('/-(scaled|thumb|thumbnail|medium|large)$/', '', $filename);
-        }
-        
-        // Обработка CamelCase
-        if (isset($settings['camelcase_split']) && $settings['camelcase_split'] == '1') {
-            $filename = preg_replace('/([a-z])([A-Z])/', '$1 $2', $filename);
-        }
-        
-        // Замена дефисов и подчеркиваний
-        if (isset($settings['remove_hyphens']) && $settings['remove_hyphens'] == '1') {
-            $filename = str_replace(array('-', '_'), ' ', $filename);
-        }
-        
-        // Удаление точек
-        if (isset($settings['remove_dots']) && $settings['remove_dots'] == '1') {
-            $filename = str_replace('.', ' ', $filename);
-        }
-        
-        // Удаление стоп-слов
-        $stop_words = array_merge(
-            array_map('trim', explode(',', isset($settings['stop_words']) ? $settings['stop_words'] : '')),
-            array_map('trim', explode(',', isset($settings['custom_stop_words']) ? $settings['custom_stop_words'] : ''))
-        );
-        
-        foreach ($stop_words as $word) {
-            $word = trim($word);
-            if (!empty($word)) {
-                $pattern = '/\b' . preg_quote($word, '/') . '\b/i';
-                if (@preg_match($pattern, '') !== false) {
-                    $filename = preg_replace($pattern, '', $filename);
-                }
-            }
-        }
-        
-        // Очистка лишних пробелов
-        $filename = preg_replace('/\s+/', ' ', $filename);
-        $filename = trim($filename);
-        
-        // Капитализация
-        if (isset($settings['capitalize_words']) && $settings['capitalize_words'] == '1') {
-            $filename = ucwords(strtolower($filename));
-        }
-        
-        return $filename;
+private function clean_filename($filename, $settings) {
+    // Удаление номеров камер (DSC_0001, IMG_20231225, etc.)
+    if (isset($settings['remove_numbers']) && $settings['remove_numbers'] == '1') {
+        $filename = preg_replace('/^(DSC|IMG|DCIM|PHOTO|PIC)[-_]?\d+/i', '', $filename);
+        $filename = preg_replace('/^\d{8}[-_]\d{6}/', '', $filename);
     }
+    
+    // Удаление суффиксов размеров
+    if (isset($settings['remove_size_suffix']) && $settings['remove_size_suffix'] == '1') {
+        $filename = preg_replace('/-\d+x\d+$/', '', $filename);
+        $filename = preg_replace('/-(scaled|thumb|thumbnail|medium|large)$/', '', $filename);
+    }
+    
+    // Обработка CamelCase
+    if (isset($settings['camelcase_split']) && $settings['camelcase_split'] == '1') {
+        $filename = preg_replace('/([a-z])([A-Z])/', '$1 $2', $filename);
+    }
+    
+    // Замена дефисов и подчеркиваний
+    if (isset($settings['remove_hyphens']) && $settings['remove_hyphens'] == '1') {
+        $filename = str_replace(array('-', '_'), ' ', $filename);
+    }
+    
+    // Удаление точек
+    if (isset($settings['remove_dots']) && $settings['remove_dots'] == '1') {
+        $filename = str_replace('.', ' ', $filename);
+    }
+    
+    // Удаление стоп-слов
+    $stop_words = array_merge(
+        array_map('trim', explode(',', isset($settings['stop_words']) ? $settings['stop_words'] : '')),
+        array_map('trim', explode(',', isset($settings['custom_stop_words']) ? $settings['custom_stop_words'] : ''))
+    );
+    
+    foreach ($stop_words as $word) {
+        $word = trim($word);
+        if (!empty($word)) {
+            $pattern = '/\b' . preg_quote($word, '/') . '\b/i';
+            $filename = preg_replace($pattern, '', $filename);
+        }
+    }
+    
+    // Очистка лишних пробелов
+    $filename = preg_replace('/\s+/', ' ', $filename);
+    $filename = trim($filename);
+    
+    // Капитализация
+    if (isset($settings['capitalize_words']) && $settings['capitalize_words'] == '1') {
+        $filename = ucwords(strtolower($filename));
+    }
+    
+    return $filename;
+}
     
     /**
      * Генерация текста тега
@@ -2447,7 +2392,7 @@ private function render_settings_tab($settings) {
      */
     private function translate_text($text, $settings) {
         if (empty($text)) {
-            return new WP_Error('empty_text', __('Text to translate is empty', 'auto-image-tags'));
+            return new WP_Error('empty_text', esc_html__('Text to translate is empty', 'auto-image-tags'));
         }
         
         $service = isset($settings['translation_service']) ? $settings['translation_service'] : 'google';
@@ -2466,7 +2411,7 @@ private function render_settings_tab($settings) {
             case 'mymemory':
                 return $this->translate_mymemory($text, $source_lang, $target_lang, $settings);
             default:
-                return new WP_Error('invalid_service', __('Unknown translation service', 'auto-image-tags'));
+                return new WP_Error('invalid_service', esc_html__('Unknown translation service', 'auto-image-tags'));
         }
     }
 
@@ -2477,7 +2422,7 @@ private function render_settings_tab($settings) {
         $api_key = isset($settings['translation_google_key']) ? $settings['translation_google_key'] : '';
         
         if (empty($api_key)) {
-            return new WP_Error('no_api_key', __('Google Translate API key not specified', 'auto-image-tags'));
+            return new WP_Error('no_api_key', esc_html__('Google Translate API key not specified', 'auto-image-tags'));
         }
         
         $url = 'https://translation.googleapis.com/language/translate/v2';
@@ -2508,7 +2453,7 @@ private function render_settings_tab($settings) {
             return sanitize_text_field($data['data']['translations'][0]['translatedText']);
         }
         
-        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+        return new WP_Error('invalid_response', esc_html__('Invalid API response', 'auto-image-tags'));
     }
 
     /**
@@ -2518,7 +2463,7 @@ private function render_settings_tab($settings) {
         $api_key = isset($settings['translation_deepl_key']) ? $settings['translation_deepl_key'] : '';
         
         if (empty($api_key)) {
-            return new WP_Error('no_api_key', __('DeepL API key not specified', 'auto-image-tags'));
+            return new WP_Error('no_api_key', esc_html__('DeepL API key not specified', 'auto-image-tags'));
         }
         
         // Определяем URL (бесплатный или платный API)
@@ -2554,7 +2499,7 @@ private function render_settings_tab($settings) {
             return sanitize_text_field($data['translations'][0]['text']);
         }
         
-        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+        return new WP_Error('invalid_response', esc_html__('Invalid API response', 'auto-image-tags'));
     }
 
     /**
@@ -2564,7 +2509,7 @@ private function render_settings_tab($settings) {
         $api_key = isset($settings['translation_yandex_key']) ? $settings['translation_yandex_key'] : '';
         
         if (empty($api_key)) {
-            return new WP_Error('no_api_key', __('Yandex Translator API key not specified', 'auto-image-tags'));
+            return new WP_Error('no_api_key', esc_html__('Yandex Translator API key not specified', 'auto-image-tags'));
         }
         
         $url = 'https://translate.api.cloud.yandex.net/translate/v2/translate';
@@ -2597,7 +2542,7 @@ private function render_settings_tab($settings) {
             return sanitize_text_field($data['translations'][0]['text']);
         }
         
-        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+        return new WP_Error('invalid_response', esc_html__('Invalid API response', 'auto-image-tags'));
     }
 
     /**
@@ -2633,7 +2578,7 @@ private function render_settings_tab($settings) {
             return sanitize_text_field($data['translatedText']);
         }
         
-        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+        return new WP_Error('invalid_response', esc_html__('Invalid API response', 'auto-image-tags'));
     }
 
     /**
@@ -2662,7 +2607,7 @@ private function render_settings_tab($settings) {
         $data = json_decode($body, true);
         
         if (isset($data['responseStatus']) && $data['responseStatus'] != 200) {
-            $error_msg = isset($data['responseDetails']) ? sanitize_text_field($data['responseDetails']) : __('API error', 'auto-image-tags');
+            $error_msg = isset($data['responseDetails']) ? sanitize_text_field($data['responseDetails']) : esc_html__('API error', 'auto-image-tags');
             return new WP_Error('api_error', $error_msg);
         }
         
@@ -2670,7 +2615,7 @@ private function render_settings_tab($settings) {
             return sanitize_text_field($data['responseData']['translatedText']);
         }
         
-        return new WP_Error('invalid_response', __('Invalid API response', 'auto-image-tags'));
+        return new WP_Error('invalid_response', esc_html__('Invalid API response', 'auto-image-tags'));
     }
 
     /**
@@ -2927,48 +2872,48 @@ private function render_settings_tab($settings) {
             'ajaxurl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('autoimta_ajax_nonce'),
             'strings' => array(
-                'loading' => __('Loading...', 'auto-image-tags'),
-                'processed' => __('Processed:', 'auto-image-tags'),
-                'success' => __('Success:', 'auto-image-tags'),
-                'errors' => __('Errors:', 'auto-image-tags'),
-                'skipped' => __('Skipped:', 'auto-image-tags'),
-                'confirm_process' => __('Are you sure you want to start processing images?', 'auto-image-tags'),
-                'confirm_test' => __('Run test processing? (changes will not be saved)', 'auto-image-tags'),
-                'confirm_remove' => __('Are you sure? This action cannot be undone!', 'auto-image-tags'),
-                'confirm_translate' => __('Start bulk translation of all tags?', 'auto-image-tags'),
-                'empty' => __('empty', 'auto-image-tags'),
-                'no_changes' => __('no changes', 'auto-image-tags'),
-                'all' => __('All', 'auto-image-tags'),
-                'total_images' => __('Total images:', 'auto-image-tags'),
-                'without_alt' => __('Without ALT:', 'auto-image-tags'),
-                'without_title' => __('Without TITLE:', 'auto-image-tags'),
-                'will_be_processed' => __('Will be processed:', 'auto-image-tags'),
-                'no_images' => __('No images to process with selected filters.', 'auto-image-tags'),
-                'completed' => __('Processing completed!', 'auto-image-tags'),
-                'test_mode' => __('TEST MODE', 'auto-image-tags'),
-                'test_run' => __('This was a test run. Changes were not saved.', 'auto-image-tags'),
-                'successfully_processed' => __('Successfully processed:', 'auto-image-tags'),
-                'removal_completed' => __('Removal completed!', 'auto-image-tags'),
-                'images_processed' => __('Images processed:', 'auto-image-tags'),
-                'translation_completed' => __('Translation completed!', 'auto-image-tags'),
-                'successfully_translated' => __('Successfully translated:', 'auto-image-tags'),
-                'removed' => __('Removed:', 'auto-image-tags'),
-                'translated' => __('Translated:', 'auto-image-tags'),
-                'original' => __('Original:', 'auto-image-tags'),
-                'translation' => __('Translation:', 'auto-image-tags'),
-                'settings_imported' => __('Settings successfully imported!', 'auto-image-tags'),
-                'invalid_file' => __('Error: invalid file format', 'auto-image-tags'),
-                'select_at_least_one' => __('Select at least one tag type to remove', 'auto-image-tags'),
-                'enter_text' => __('Enter text to translate', 'auto-image-tags'),
-                'translating' => __('Translating...', 'auto-image-tags'),
-                'test_translation' => __('Test Translation', 'auto-image-tags'),
-                'connection_error' => __('Connection error', 'auto-image-tags'),
-                'found_images_with_tags' => __('Found images with tags:', 'auto-image-tags'),
-                'found_images' => __('Found images:', 'auto-image-tags'),
-                'start_processing' => __('Start Processing', 'auto-image-tags'),
-                'process_again' => __('Process Again', 'auto-image-tags'),
-                'remove_tags' => __('Remove Tags', 'auto-image-tags'),
-                'start_translation' => __('Start Translation', 'auto-image-tags')
+                'loading' => esc_html__('Loading...', 'auto-image-tags'),
+                'processed' => esc_html__('Processed:', 'auto-image-tags'),
+                'success' => esc_html__('Success:', 'auto-image-tags'),
+                'errors' => esc_html__('Errors:', 'auto-image-tags'),
+                'skipped' => esc_html__('Skipped:', 'auto-image-tags'),
+                'confirm_process' => esc_html__('Are you sure you want to start processing images?', 'auto-image-tags'),
+                'confirm_test' => esc_html__('Run test processing? (changes will not be saved)', 'auto-image-tags'),
+                'confirm_remove' => esc_html__('Are you sure? This action cannot be undone!', 'auto-image-tags'),
+                'confirm_translate' => esc_html__('Start bulk translation of all tags?', 'auto-image-tags'),
+                'empty' => esc_html__('empty', 'auto-image-tags'),
+                'no_changes' => esc_html__('no changes', 'auto-image-tags'),
+                'all' => esc_html__('All', 'auto-image-tags'),
+                'total_images' => esc_html__('Total images:', 'auto-image-tags'),
+                'without_alt' => esc_html__('Without ALT:', 'auto-image-tags'),
+                'without_title' => esc_html__('Without TITLE:', 'auto-image-tags'),
+                'will_be_processed' => esc_html__('Will be processed:', 'auto-image-tags'),
+                'no_images' => esc_html__('No images to process with selected filters.', 'auto-image-tags'),
+                'completed' => esc_html__('Processing completed!', 'auto-image-tags'),
+                'test_mode' => esc_html__('TEST MODE', 'auto-image-tags'),
+                'test_run' => esc_html__('This was a test run. Changes were not saved.', 'auto-image-tags'),
+                'successfully_processed' => esc_html__('Successfully processed:', 'auto-image-tags'),
+                'removal_completed' => esc_html__('Removal completed!', 'auto-image-tags'),
+                'images_processed' => esc_html__('Images processed:', 'auto-image-tags'),
+                'translation_completed' => esc_html__('Translation completed!', 'auto-image-tags'),
+                'successfully_translated' => esc_html__('Successfully translated:', 'auto-image-tags'),
+                'removed' => esc_html__('Removed:', 'auto-image-tags'),
+                'translated' => esc_html__('Translated:', 'auto-image-tags'),
+                'original' => esc_html__('Original:', 'auto-image-tags'),
+                'translation' => esc_html__('Translation:', 'auto-image-tags'),
+                'settings_imported' => esc_html__('Settings successfully imported!', 'auto-image-tags'),
+                'invalid_file' => esc_html__('Error: invalid file format', 'auto-image-tags'),
+                'select_at_least_one' => esc_html__('Select at least one tag type to remove', 'auto-image-tags'),
+                'enter_text' => esc_html__('Enter text to translate', 'auto-image-tags'),
+                'translating' => esc_html__('Translating...', 'auto-image-tags'),
+                'test_translation' => esc_html__('Test Translation', 'auto-image-tags'),
+                'connection_error' => esc_html__('Connection error', 'auto-image-tags'),
+                'found_images_with_tags' => esc_html__('Found images with tags:', 'auto-image-tags'),
+                'found_images' => esc_html__('Found images:', 'auto-image-tags'),
+                'start_processing' => esc_html__('Start Processing', 'auto-image-tags'),
+                'process_again' => esc_html__('Process Again', 'auto-image-tags'),
+                'remove_tags' => esc_html__('Remove Tags', 'auto-image-tags'),
+                'start_translation' => esc_html__('Start Translation', 'auto-image-tags')
             )
         ));
     }
